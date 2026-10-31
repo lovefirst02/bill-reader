@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+models/
+# Bills and what was read from them may contain customer information.
+samples/
+tmp/
+*.csv
+*.log

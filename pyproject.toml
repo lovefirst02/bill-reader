@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bill-reader"
+dynamic = ["version"]
+description = "Read Taipower bills to a CSV with models trained on bills, on the CPU"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+  "numpy",
+  "onnxruntime>=1.20",
+  "opencv-python-headless",
+  "pdfplumber>=0.11.10",
+  "Pillow>=10",
+]
+
+[project.scripts]
+bill-reader = "bill_reader.cli:main"
+
+[dependency-groups]
+dev = ["pyinstaller>=6.10"]
+
+[tool.setuptools.dynamic]
+version = { attr = "bill_reader.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
