@@ -19,14 +19,13 @@ def bill(rows, detailed=False):
 
 
 class PrepaidChargeTests(unittest.TestCase):
-    def test_printed_signed_value_and_chinese_mapping_on_both_layouts(self):
+    def test_printed_signed_value_on_both_layouts(self):
         for detailed in (False, True):
             for label in ("本期預繳", "本期預繳金額"):
                 for text, expected in (("-1,200.5元", -1200.5), ("0元", 0), ("+268元", 268)):
                     with self.subTest(detailed=detailed, label=label, text=text):
                         result = bill([(label, text)], detailed)
                         self.assertEqual(result.get("charge_info.prepaid_applied_twd"), expected)
-                        self.assertEqual(result.get("by_label.計費內容.本期預繳"), expected)
 
     def test_inline_value_is_supported_without_colon_on_both_layouts(self):
         for detailed in (False, True):

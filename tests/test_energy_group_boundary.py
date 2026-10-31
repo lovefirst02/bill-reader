@@ -2,7 +2,7 @@
 import unittest
 
 from bill_reader.parser import (
-    OcrLine, _energy_groups, _bank_autopay_energy_groups_from_raw_lines,
+    OcrLine, _energy_groups,
 )
 
 
@@ -19,24 +19,7 @@ class EnergyGroupBoundaryTests(unittest.TestCase):
                 self.assertEqual(groups.get("transferred_energy"), {
                     "peak_kwh": 11891, "saturday_semi_peak_kwh": 1200})
 
-    def test_raw_group_preserves_billed_zero_and_recovers_transfer(self):
-        groups = _bank_autopay_energy_groups_from_raw_lines([
-            "費度數 / Energy", "Consumption(kWh)",
-            "週六半尖峰度數", "0", "0", "供度數（度）",
-            "週六半尖峰度數", "1200", "1200",
-        ])
-        self.assertEqual(groups, {
-            "energy_consumption": {"saturday_semi_peak_kwh": 0},
-            "transferred_energy": {"saturday_semi_peak_kwh": 1200},
-        })
 
-    def test_raw_missing_billed_value_stops_at_transfer_heading(self):
-        groups = _bank_autopay_energy_groups_from_raw_lines([
-            "計費度數 / Energy Consumption(kWh)", "週六半尖峰度數",
-            "供度數（度）", "週六半尖峰度數", "1200",
-        ])
-        self.assertNotIn("saturday_semi_peak_kwh", groups.get("energy_consumption", {}))
-        self.assertEqual(groups.get("transferred_energy"), {"saturday_semi_peak_kwh": 1200})
 
     def test_coordinate_zero_is_retained_with_damaged_transfer_heading(self):
         texts = ["計費度數", "週六半尖峰度數 0", "供度數（度）", "週六半尖峰度數 1200"]

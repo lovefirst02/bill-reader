@@ -123,63 +123,48 @@ def _dashed_meter(number: str) -> str:
     return "-".join(match.groups()) if match else number
 
 
+# Where each column's value is stored, as read and as filled in.
+_VALUE_PATHS = {
+    "Billing Period 計費期間": "user_info.billing_period",
+    "Custom No. 電號": "user_info.customer_number",
+    "基本電費": "charge_info.basic_charge_twd",
+    "流動電費": "charge_info.energy_charge_twd",
+    "功率因數調整費": "charge_info.power_factor_adjustment_twd",
+    "預繳費用": "charge_info.prepaid_applied_twd",
+    "稅前應繳總金額": "charge_info.pretax_total_twd",
+    "應繳總金額": "charge_info.total_amount_twd",
+    **{f"{group}_{component}": f"user_info.{group_key}.{component_key}"
+       for group, group_key in _ENERGY_GROUPS for component, component_key in _TOU_COMPONENTS},
+}
+
+
 def _bill_values(bill: BillResult) -> dict[str, Any]:
     """Every column read from the bill."""
+    values = {column: bill.get(path) for column, path in _VALUE_PATHS.items()}
+    values["Billing Period 計費期間"] = _format_period(_first(bill, "user_info.billing_period", "payment_info.billing_period"))
     customer_number = _first(bill, "user_info.customer_number", "payment_info.customer_number")
-    values = {
-        "Billing Period 計費期間": _format_period(_first(bill, "user_info.billing_period", "payment_info.billing_period")),
-        "Custom No. 電號": _dashed_meter(str(customer_number)) if customer_number else None,
-        "基本電費": bill.get("charge_info.basic_charge_twd"),
-        "流動電費": bill.get("charge_info.energy_charge_twd"),
-        "功率因數調整費": bill.get("charge_info.power_factor_adjustment_twd"),
-        "預繳費用": bill.get("charge_info.prepaid_applied_twd"),
-        "稅前應繳總金額": bill.get("charge_info.pretax_total_twd"),
-        "應繳總金額": bill.get("charge_info.total_amount_twd"),
-    }
+    values["Custom No. 電號"] = _dashed_meter(str(customer_number)) if customer_number else None
     for group, group_key in _ENERGY_GROUPS:
         for component, component_key in _TOU_COMPONENTS:
-            # The detailed high-voltage layout keeps the kWh groups in its own block.
+            # The table layout keeps the kWh groups in its own block.
             values[f"{group}_{component}"] = _first(bill, f"user_info.{group_key}.{component_key}", f"energy_usage.{group_key}.{component_key}")
     return values
 
 
-def _value_paths() -> dict[str, str]:
-    paths = {
-        "Billing Period 計費期間": "user_info.billing_period",
-        "Custom No. 電號": "user_info.customer_number",
-        "基本電費": "charge_info.basic_charge_twd",
-        "流動電費": "charge_info.energy_charge_twd",
-        "功率因數調整費": "charge_info.power_factor_adjustment_twd",
-        "預繳費用": "charge_info.prepaid_applied_twd",
-        "稅前應繳總金額": "charge_info.pretax_total_twd",
-        "應繳總金額": "charge_info.total_amount_twd",
-    }
-    for group, group_key in _ENERGY_GROUPS:
-        for component, component_key in _TOU_COMPONENTS:
-            paths[f"{group}_{component}"] = f"user_info.{group_key}.{component_key}"
-    return paths
-
-
 def _store(bill: BillResult, path: str, value: Any) -> None:
-    """Into the bill and its block's fields, the two places a value is read from."""
-    block, *keys = path.split(".")
-    blocks = bill.get("blocks")
-    fields = blocks[block].get("fields") if isinstance(blocks, Mapping) and isinstance(blocks.get(block), dict) else None
-    for root in (bill.setdefault(block, {}), fields):
-        if isinstance(root, dict):
-            node = root
-            for key in keys[:-1]:
-                node = node.setdefault(key, {})
-            node[keys[-1]] = value
+    *parents, last = path.split(".")
+    node = bill
+    for key in parents:
+        node = node.setdefault(key, {})
+    node[last] = value
 
 
 def fill_missing(bill: BillResult, other: BillResult) -> list[str]:
     """What ``bill`` lacks, from another reading of the page: the columns filled. Its own values stay."""
     ours, theirs = _bill_values(bill), _bill_values(other)
-    paths = _value_paths()
     filled = [column for column, value in theirs.items() if value is not None and ours[column] is None]
     for column in filled:
-        _store(bill, paths[column], theirs[column])
+        _store(bill, _VALUE_PATHS[column], theirs[column])
     tax = other.get("charge_info.business_tax_twd")
     if tax is not None and bill.get("charge_info.business_tax_twd") is None:
         _store(bill, "charge_info.business_tax_twd", tax)
@@ -229,11 +214,7 @@ def bill_to_record(bill: BillResult, source: str | None = None) -> BillRecord:
             issues.append(Issue(f"缺少{peak}", [peak]))
 
     # Parser warnings describe inferred values.
-    issues.extend(
-        Issue(warning) for warning in bill.get("quality.warnings") or []
-        # How the page was laid out, not whether its values are right.
-        if warning != "legacy_virtual_blocks"
-    )
+    issues.extend(Issue(warning) for warning in bill.get("quality.warnings") or [])
     row["來源檔案"] = source
     row["頁碼"] = bill.get("quality.page_number")
     row[REVIEW_COLUMN] = "；".join(issue.text for issue in issues) or None

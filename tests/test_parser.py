@@ -218,33 +218,6 @@ class BillLayoutParserTests(unittest.TestCase):
             result.get("user_info.transferred_energy.semi_peak_kwh"), 200
         )
 
-    def test_preserves_new_fields_and_entirely_unknown_blocks(self):
-        """Catches silently discarding fields added by a future bill revision."""
-        lines = [
-            OcrLine("用戶資訊 Basic Info.", 40, 100, 220, 24),
-            OcrLine("電價種類", 50, 140, 90, 18),
-            OcrLine("表燈非營業用", 170, 140, 130, 18),
-            OcrLine("新制回饋度數", 50, 170, 120, 18),
-            OcrLine("18.5", 210, 170, 45, 18),
-            OcrLine("再生能源資訊 Renewable Energy Info.", 40, 260, 330, 24),
-            OcrLine("綠電憑證張數", 50, 300, 120, 18),
-            OcrLine("12", 210, 300, 30, 18),
-            OcrLine("憑證批號", 50, 330, 90, 18),
-            OcrLine("REC-2026-A", 210, 330, 110, 18),
-        ]
-
-        result = parse_bill_layout(lines)
-
-        self.assertEqual(result.get("user_info.新制回饋度數"), 18.5)
-        self.assertEqual(
-            result["blocks"]["unknown_1"]["title"],
-            "再生能源資訊 Renewable Energy Info.",
-        )
-        self.assertEqual(result.get("unknown_1.綠電憑證張數"), 12)
-        self.assertEqual(result.get("unknown_1.憑證批號"), "REC-2026-A")
-        self.assertEqual(
-            result["by_label"]["再生能源資訊"]["綠電憑證張數"], 12
-        )
 
     def test_separates_basic_and_charge_columns_into_queryable_blocks(self):
         """Catches losing fields when two side-by-side blocks share Y positions."""
@@ -261,8 +234,6 @@ class BillLayoutParserTests(unittest.TestCase):
 
         result = parse_bill_layout(lines)
 
-        self.assertEqual(result.get("user_info.energy_consumption_kwh"), 705)
-        self.assertEqual(result.get("user_info.shared_households"), 106)
         self.assertEqual(result.get("charge_info.energy_charge_twd"), 1474.9)
         self.assertEqual(result.get("charge_info.total_amount_twd"), 1687)
 
@@ -309,38 +280,8 @@ class BillLayoutParserTests(unittest.TestCase):
 
         result = parse_bill_layout(lines)
 
-        self.assertEqual(result.get("user_info.tariff_type"), "表燈非營業用")
-        self.assertEqual(result.get("user_info.time_type"), "非時間電價")
-        self.assertEqual(result.get("user_info.base_reading"), 40)
-        self.assertEqual(result.get("user_info.energy_consumption_kwh"), 610)
-        self.assertEqual(result.get("user_info.business_tax_id"), "00423107")
         self.assertEqual(result.get("user_info.billing_period.start"), "113/02/06")
         self.assertEqual(result.get("user_info.billing_period.end"), "113/04/09")
-        self.assertEqual(result.get("user_info.current_reading_date"), "113/04/10")
-        self.assertEqual(result.get("user_info.current_charge_date"), "113/04/16")
-        self.assertEqual(result.get("user_info.next_reading_date"), "113/06/11")
-        self.assertEqual(result.get("user_info.next_charge_date"), "113/06/19")
-        self.assertEqual(result.get("charge_info.shared_public_charge_twd"), 920.7)
-        self.assertEqual(result.get("other_info.outage_group"), "H")
-        self.assertEqual(result.get("other_info.feeder_code"), "CY36")
-        self.assertEqual(result.get("invoice_info.invoice_number"), "WG-73787182")
-        self.assertEqual(result.get("invoice_info.amount_twd"), 1467)
-        self.assertEqual(
-            result["by_label"]["用戶資訊"],
-            {
-                "電價種類": "表燈非營業用",
-                "時間種類": "非時間電價",
-                "底度": 40,
-                "計費度數": 610,
-                "公共分攤戶數": 434,
-                "營業統編": "00423107",
-                "計費期間": {"start": "113/02/06", "end": "113/04/09"},
-                "本次抄表日": "113/04/10",
-                "本次收費日": "113/04/16",
-                "下次抄表日": "113/06/11",
-                "下次收費日": "113/06/19",
-            },
-        )
 
 
 if __name__ == "__main__":

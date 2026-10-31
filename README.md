@@ -23,10 +23,10 @@ uv run python -m bill_reader 帳單資料夾 -o bills.csv --details
 ```
 PDF ──有可信的文字──→ pdf_text.py ──有缺值──→ 模型只補空格
  │                        │
- │                        └─完整──────────────┐
- └─沒有或不可信─┐                              ▼
+ │                        └─完整─────────┐
+ └─沒有或不可信─┐                         ▼
 圖片 ───────────┴→ page.py + engine.py → parser.py → record.py → cli.py → CSV
-                   找區塊、偵測、讀字     標籤配數值    檢查、標記
+                   轉正、偵測、讀字       標籤配數值    檢查、標記
 ```
 
 ## 要改什麼，看哪裡
@@ -35,13 +35,15 @@ PDF ──有可信的文字──→ pdf_text.py ──有缺值──→ 模�
 |---|---|
 | 輸出欄位、CSV、Log | `cli.py` |
 | 「需人工檢查」的規則、讀不到寫 0 | `record.py` |
-| 認得新的標籤、版面、把值配給欄位 | `parser.py`（最大的檔案，用 `_parse_detailed_high_voltage_layout` 等版面函式找） |
+| 一般版帳單：把值配給欄位、修正讀錯的值 | `parser.py` |
+| 表格版帳單（基本資料／計費內容／用電資料） | `table_layout.py` |
 | PDF 文字路線、什麼時候信任文字 | `pdf_text.py` |
-| 頁面流程、區塊太窄、重讀漏掉的列 | `page.py` |
-| 依顏色找區塊 | `blocks.py` |
+| 頁面轉正、把畫面交給模型 | `page.py` |
 | 跑模型、圖片縮放 | `engine.py` |
 | 模型認得哪些字和標籤 | `vocabulary.py` |
 | 檔案和頁面的順序、走哪條路線 | `reader.py` |
+
+`parser.py` 不抽 CSV 用不到的欄位。要加新欄位時，先在 `_FIELDS` 和表格版的 `_CHARGES` 加標籤，再到 `record.py` 加欄位。
 
 ## 改完怎麼確認
 
@@ -49,13 +51,14 @@ PDF ──有可信的文字──→ pdf_text.py ──有缺值──→ 模�
 uv run python -m unittest discover -s tests
 ```
 
-有真實帳單和正解時，比較改動前後（帳單和正解不要放進 Git，`samples/` 已被忽略）：
+有真實帳單時，用 `evaluation/compare.py` 確認改動前後哪些值變了。`files.txt` 每行一個帳單檔案：
 
 ```powershell
-uv run python evaluation/read_bills.py before.json 帳單1.png 帳單2.png
-uv run python evaluation/read_bills.py after.json 帳單1.png 帳單2.png
-uv run python evaluation/stats_compare.py out.md samples/truth_rows.json A=before.json B=after.json
+uv run python evaluation/compare.py record tmp/ref.json tmp/files.txt   # 改之前
+uv run python evaluation/compare.py check  tmp/ref.json tmp/files.txt   # 改之後
 ```
+
+第一次要跑模型比較久，之後會用快取。`tmp/` 和 `samples/` 已被 Git 忽略，帳單都放那裡。
 
 - 測試資料要用假值，不要把真實電號、地址或金額寫進程式或測試。
 - 看錯誤時，用 `bills.log` 的「路線」和「讀到」判斷是模型讀錯，還是 `parser.py` 配錯。
@@ -64,7 +67,7 @@ uv run python evaluation/stats_compare.py out.md samples/truth_rows.json A=befor
 
 1. 在 `bill-models` 發佈新版。
 2. 改 `models.lock.json` 的版本和 SHA-256（新版的 `models.json` 裡有）。
-3. 重新執行 `scripts/fetch_models.py`，再做上面的比較，確實比較好才換。
+3. 重新執行 `scripts/fetch_models.py`，再用 `compare.py` 比較，確實比較好才換。
 
 `vocabulary.py` 多了模型沒學過的字時，要回 `bill-models` 重新訓練。
 
