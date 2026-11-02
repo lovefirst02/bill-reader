@@ -1,4 +1,5 @@
 import csv
+import queue
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,8 +56,8 @@ class BillCsvLogTests(unittest.TestCase):
 
 class BillCsvTests(unittest.TestCase):
     def test_the_columns_asked_for_and_no_more(self):
-        (written, skipped, failures), rows = read_back(False)
-        self.assertEqual((written, skipped, failures), (1, 1, []))
+        summary, rows = read_back(False)
+        self.assertEqual(summary, (1, 1, 1, []))
         self.assertEqual(tuple(rows[0]), CSV_COLUMNS)
         self.assertEqual(rows[0]["Billing Period 計費期間"], "113/01/01~113/01/31")
         self.assertEqual(rows[0]["基本電費"], "634220")
@@ -68,3 +69,58 @@ class BillCsvTests(unittest.TestCase):
         _, rows = read_back(True)
         self.assertEqual(tuple(rows[0]), CSV_COLUMNS + DETAIL_COLUMNS)
         self.assertEqual((rows[0]["來源檔案"], rows[0]["需人工檢查"]), ("a.png", "缺少流動電費"))
+
+    def test_details_are_written_unless_turned_off(self):
+        for flags, expected in (([], True), (["--no-details"], False)):
+            with tempfile.TemporaryDirectory() as folder, self.subTest(flags=flags):
+                bill = Path(folder) / "a.png"
+                bill.touch()
+                with mock.patch.object(bill_csv, "write_csv", return_value=bill_csv.Summary(1, 0, 0, [])) as write:
+                    self.assertEqual(bill_csv.main([str(bill), *flags]), 0)
+                self.assertEqual(write.call_args.kwargs["details"], expected)
+
+    def test_no_arguments_open_the_window(self):
+        with mock.patch("bill_reader.gui.run", return_value=0) as run:
+            self.assertEqual(bill_csv.main([]), 0)
+        run.assert_called_once()
+
+    def test_each_bill_and_file_is_reported_as_it_goes(self):
+        events = [PageDone(Path("a.png"), None, Record()), FileFinished(Path("a.png")), FileFinished(Path("b.png"), "ValueError: broken")]
+        said, finished = [], []
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(bill_csv, "iter_pages", lambda files, extractor: iter(events)):
+            summary = write_csv([Path("a.png"), Path("b.png")], Path(folder) / "bills.csv", object(), say=said.append, on_file=finished.append)
+        self.assertEqual(finished, [1, 2])
+        self.assertEqual(summary.failures, ["b.png: ValueError: broken"])
+        self.assertIn("to review", said[0])
+        self.assertIn("failed", said[1])
+
+
+class WindowWorkTests(unittest.TestCase):
+    def events_of(self, paths, out, write_csv=None):
+        from bill_reader import gui
+
+        events = queue.Queue()
+        with mock.patch.object(gui, "write_csv", write_csv):
+            gui.work(paths, out, events)
+        return [events.get_nowait() for _ in range(events.qsize())]
+
+    def test_an_empty_folder_says_so(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (kind, message), = self.events_of([folder], Path(folder) / "bills.csv")
+        self.assertEqual(kind, "error")
+        self.assertIn("No bill files found", message)
+
+    def test_a_csv_held_open_by_excel_says_so(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "a.png").touch()
+            events = self.events_of([folder], Path(folder) / "bills.csv", write_csv=mock.Mock(side_effect=PermissionError))
+        self.assertEqual(events[-1][0], "error")
+        self.assertIn("Excel", events[-1][1])
+
+    def test_it_ends_with_the_summary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "a.png").touch()
+            events = self.events_of([folder], Path(folder) / "bills.csv", write_csv=mock.Mock(return_value=bill_csv.Summary(1, 2, 1, [])))
+        self.assertEqual(events[0], ("total", 1))
+        self.assertEqual(events[-1][0], "done")
+        self.assertIn("1 bill(s), 1 to review", events[-1][1])

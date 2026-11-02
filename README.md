@@ -12,10 +12,11 @@
 ```powershell
 uv sync
 uv run python scripts/fetch_models.py
-uv run python -m bill_reader 帳單資料夾 -o bills.csv --details
+uv run python -m bill_reader                                # 開視窗，選輸入和輸出
+uv run python -m bill_reader 帳單資料夾 -o bills.csv         # 命令列
 ```
 
-- `bills.csv`：每張帳單一列。**請加 `--details`**，否則沒有「需人工檢查」欄，讀不到的 0 和帳單上真的 0 無法分辨。
+- `bills.csv`：每張帳單一列，預設包含「來源檔案」「頁碼」「需人工檢查」。命令列可加 `--no-details` 拿掉這三欄，但拿掉後，讀不到的 0 和帳單上真的 0 無法分辨。
 - `bills.log`：每頁走哪條路線、為什麼、讀到什麼。內容包含完整帳單資料，不要傳到公開的地方。
 
 ## 一頁怎麼被讀
@@ -33,6 +34,7 @@ PDF ──有可信的文字──→ pdf_text.py ──有缺值──→ 模�
 
 | 想改的事 | 檔案 |
 |---|---|
+| 視窗 | `gui.py` |
 | 輸出欄位、CSV、Log | `cli.py` |
 | 「需人工檢查」的規則、讀不到寫 0 | `record.py` |
 | 一般版帳單：把值配給欄位、修正讀錯的值 | `parser.py` |
@@ -77,7 +79,7 @@ uv run python evaluation/compare.py check  tmp/ref.json tmp/files.txt   # 改之
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
-輸出在 `dist/`。版本號只改 `src/bill_reader/__init__.py`。
+輸出在 `dist/`：`TaipowerBillReader.exe` 是視窗版，`TaipowerBillReaderCLI.exe` 是命令列版。版本號只改 `src/bill_reader/__init__.py`。
 
 ## 已知限制
 

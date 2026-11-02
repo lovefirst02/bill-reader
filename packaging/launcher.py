@@ -1,4 +1,4 @@
-"""Entry point of TaipowerBillReader.exe."""
+"""Entry point of both exes: without arguments the window, with them the command line."""
 
 import sys
 

@@ -52,7 +52,7 @@ class PageReader:
 
             folder = model_dir()
             if folder is None:
-                raise RuntimeError("找不到模型：請執行 python scripts/fetch_models.py，或設定 BILL_READER_MODELS")
+                raise RuntimeError("Models not found: run python scripts/fetch_models.py, or set BILL_READER_MODELS")
             self._loaded = OnnxEngine(folder)
         return self._loaded
 

@@ -1,13 +1,13 @@
 """Taipower bills to a CSV, with the models on the CPU.
 
-    python -m bill_reader bills_folder -o bills.csv --details
-    TaipowerBillReader.exe bill1.pdf bill2.jpg -o bills.csv
+    python -m bill_reader bills_folder -o bills.csv
+    TaipowerBillReaderCLI.exe bill1.pdf bill2.jpg -o bills.csv
 
-Run without arguments, it asks for a folder and writes bills.csv into it.
-``--details`` adds the source file, the page and what needs checking.
-Pages that are not a bill's charge page are left out. A figure not read is 0,
-which only ``--details`` tells from a printed 0, by naming it under what needs
-checking; opened in Excel, the file reads as Traditional Chinese.
+Run without arguments, it opens a window to choose them in (gui.py).
+The source file, the page and what needs checking are written too, unless
+``--no-details``. Pages that are not a bill's charge page are left out. A figure
+not read is 0, which only what needs checking tells from a printed 0, by naming
+it; opened in Excel, the file reads as Traditional Chinese.
 Beside the CSV, a .log says how each page was read and what was read on it.
 """
 
@@ -18,12 +18,12 @@ import csv
 import sys
 import time
 from pathlib import Path
-from typing import TextIO
+from typing import Callable, NamedTuple, TextIO
 
 from . import __version__
 from .parser import BillResult
 from .reader import FileFinished, PageDone, PageReader, find_bill_files, has_bill_values, iter_pages
-from .record import with_zeros
+from .record import REVIEW_COLUMN, with_zeros
 
 _KWH = ("尖峰度數", "半尖峰度數", "週六半尖峰度數", "離峰度數")
 CSV_COLUMNS = (
@@ -39,9 +39,24 @@ CSV_COLUMNS = (
     "應繳總金額",
 )
 DETAIL_COLUMNS = ("來源檔案", "頁碼", "需人工檢查")
+NO_BILLS = "No bill files found (PDF, PNG, JPG, TIF and BMP are supported)"
 
 
-def _inputs(paths: list[str]) -> list[Path]:
+class Summary(NamedTuple):
+    written: int
+    skipped: int
+    flagged: int
+    failures: list[str]
+
+    def text(self) -> str:
+        return f"Done: {self.written} bill(s), {self.flagged} to review, {self.skipped} other page(s) skipped, {len(self.failures)} file(s) failed"
+
+
+def _print(text: str) -> None:
+    print(text, flush=True)
+
+
+def collect_files(paths: list[str]) -> list[Path]:
     files: list[Path] = []
     for name in paths:
         path = Path(name)
@@ -50,15 +65,29 @@ def _inputs(paths: list[str]) -> list[Path]:
         elif path.is_file():
             files.append(path)
         else:
-            raise SystemExit(f"找不到檔案或資料夾：{name}")
+            raise SystemExit(f"File or folder not found: {name}")
     return files
 
 
-def write_csv(files: list[Path], out: Path, reader: PageReader | None = None, *, details: bool = False) -> tuple[int, int, list[str]]:
-    """Returns (bills written, other pages left out, files that failed)."""
+def default_output(paths: list[str]) -> Path:
+    """bills.csv in the folder given, or beside the first file."""
+    first = Path(paths[0])
+    return (first if first.is_dir() else first.parent) / "bills.csv"
+
+
+def write_csv(
+    files: list[Path],
+    out: Path,
+    reader: PageReader | None = None,
+    *,
+    details: bool = True,
+    say: Callable[[str], None] = _print,
+    on_file: Callable[[int], None] | None = None,
+) -> Summary:
+    """``say`` hears each bill as it is read; ``on_file`` how many files are through."""
     reader = reader or PageReader()
     columns = CSV_COLUMNS + DETAIL_COLUMNS if details else CSV_COLUMNS
-    written = skipped = 0
+    written = skipped = flagged = finished = 0
     failures: list[str] = []
     with out.open("w", newline="", encoding="utf-8-sig") as handle, out.with_suffix(".log").open("w", encoding="utf-8-sig") as log:
         log.write(f"bill-reader {__version__}  {time.strftime('%Y-%m-%d %H:%M:%S')}  {len(files)} 個檔案\n")
@@ -74,16 +103,26 @@ def write_csv(files: list[Path], out: Path, reader: PageReader | None = None, *,
                     continue
                 filled = with_zeros(event.record.row)
                 writer.writerow({column: _cell(filled.get(column)) for column in columns})
+                handle.flush()  # stopped halfway, what was read is still there
                 written += 1
-                page = f" 第 {event.page_number} 頁" if event.page_number else ""
-                how = f"（{_route(event.bill)}）" if event.bill is not None and event.bill.get("quality.source") == "pdf_text" else ""
-                print(f"{event.path.name}{page}：{event.record.row.get('Custom No. 電號') or '電號未讀到'}{how}", flush=True)
-            elif isinstance(event, FileFinished) and event.error:
-                failures.append(f"{event.path.name}: {event.error}")
-                log.write(f"\n{event.path.name}\n  失敗：{event.error}\n")
-                log.flush()
-                print(f"{event.path.name}：失敗（{event.error}）", flush=True)
-    return written, skipped, failures
+                flagged += bool(event.record.row.get(REVIEW_COLUMN))
+                page = f" page {event.page_number}" if event.page_number else ""
+                how = f" ({_ROUTE_NAMES[_route(event.bill)]})" if event.bill is not None and event.bill.get("quality.source") == "pdf_text" else ""
+                check = ", to review" if event.record.row.get(REVIEW_COLUMN) else ""
+                say(f"{event.path.name}{page}: {event.record.row.get('Custom No. 電號') or 'customer number not read'}{how}{check}")
+            elif isinstance(event, FileFinished):
+                finished += 1
+                if on_file:
+                    on_file(finished)
+                if event.error:
+                    failures.append(f"{event.path.name}: {event.error}")
+                    log.write(f"\n{event.path.name}\n  失敗：{event.error}\n")
+                    log.flush()
+                    say(f"{event.path.name}: failed ({event.error})")
+    return Summary(written, skipped, flagged, failures)
+
+
+_ROUTE_NAMES = {"PDF 文字": "PDF text", "PDF 文字＋模型補值": "PDF text + models"}
 
 
 def _route(bill: BillResult) -> str:
@@ -131,47 +170,31 @@ def _cell(value: object) -> object:
     return "" if value is None else value
 
 
-def _ask() -> tuple[Path | None, bool]:
-    """The folder of bills, and whether to add the source file, page and what needs checking."""
-    from tkinter import Tk, filedialog, messagebox
-
-    root = Tk()
-    root.withdraw()
-    chosen = filedialog.askdirectory(title="選擇放台電帳單的資料夾")
-    details = bool(chosen) and messagebox.askyesno("輸出欄位", "要多輸出「來源檔案」「頁碼」「需人工檢查」三欄嗎？")
-    root.destroy()
-    return (Path(chosen) if chosen else None), details
-
-
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="把台電帳單（PDF、圖片）讀成 CSV")
-    parser.add_argument("inputs", nargs="*", help="帳單檔案或資料夾")
-    parser.add_argument("-o", "--output", type=Path, help="輸出的 CSV，預設是資料夾裡的 bills.csv")
-    parser.add_argument("--details", action="store_true", help="多輸出來源檔案、頁碼、需人工檢查三欄")
+    parser = argparse.ArgumentParser(description="Read Taipower bills (PDF, images) to a CSV; without arguments, opens a window")
+    parser.add_argument("inputs", nargs="*", help="bill files or folders")
+    parser.add_argument("-o", "--output", type=Path, help="the CSV to write; by default bills.csv in the folder")
+    parser.add_argument("--details", action=argparse.BooleanOptionalAction, default=True, help="write the source file, page and what to review (on by default)")
     args = parser.parse_args(argv)
 
-    asked = False
-    paths, details = args.inputs, args.details
-    if not paths:
-        folder, details = _ask()
-        if folder is None:
-            return 0
-        paths, asked = [str(folder)], True
-    files = [path for path in _inputs(paths) if path != args.output]
+    if not args.inputs:
+        from .gui import run
+
+        return run()
+    files = [path for path in collect_files(args.inputs) if path != args.output]
     if not files:
-        print("沒有找到帳單檔案（支援 PDF、PNG、JPG、TIF、BMP）")
+        print(NO_BILLS)
         return 1
-    first = Path(paths[0])
-    out = args.output or (first if first.is_dir() else first.parent) / "bills.csv"
+    out = args.output or default_output(args.inputs)
+    if sys.stdout is not None:  # a file's name the console's code page lacks must not stop the batch
+        sys.stdout.reconfigure(errors="replace")
 
     started = time.time()
-    written, skipped, failures = write_csv(files, out, details=details)
-    print(f"\n完成：{written} 張帳單，略過 {skipped} 頁非帳單頁，{len(failures)} 個檔案失敗，共 {time.time() - started:.1f} 秒")
-    print(f"輸出：{out.resolve()}")
-    print(f"記錄：{out.with_suffix('.log').resolve()}")
-    if asked:
-        input("\n按 Enter 關閉")
-    return 1 if failures and not written else 0
+    summary = write_csv(files, out, details=args.details)
+    print(f"\n{summary.text()} in {time.time() - started:.1f} s")
+    print(f"Output: {out.resolve()}")
+    print(f"Log: {out.with_suffix('.log').resolve()}")
+    return 1 if summary.failures and not summary.written else 0
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# PyInstaller spec for TaipowerBillReader.exe. Build with packaging/build.ps1.
+# PyInstaller spec for TaipowerBillReader.exe (the window) and TaipowerBillReaderCLI.exe (the command line). Build with packaging/build.ps1.
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
@@ -17,6 +17,7 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="TaipowerBillReader", console=True, upx=False)
+window = EXE(pyz, a.scripts, [], exclude_binaries=True, name="TaipowerBillReader", console=False, upx=False)
+command_line = EXE(pyz, a.scripts, [], exclude_binaries=True, name="TaipowerBillReaderCLI", console=True, upx=False)
 
-coll = COLLECT(exe, a.binaries, a.datas, upx=False, name="TaipowerBillReader")
+coll = COLLECT(window, command_line, a.binaries, a.datas, upx=False, name="TaipowerBillReader")
