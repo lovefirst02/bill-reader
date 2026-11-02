@@ -3,7 +3,8 @@
     python -m bill_reader bills_folder -o bills.csv
     TaipowerBillReaderCLI.exe bill1.pdf bill2.jpg -o bills.csv
 
-Run without arguments, it opens a window to choose them in (gui.py).
+Run without arguments, it opens a window to choose them in (gui.py);
+``bill-reader watch sites.csv`` watches folders instead (watch.py).
 The source file, the page and what needs checking are written too, unless
 ``--no-details``. Pages that are not a bill's charge page are left out. A figure
 not read is 0, which only what needs checking tells from a printed 0, by naming
@@ -22,7 +23,7 @@ from typing import Callable, NamedTuple, TextIO
 
 from . import __version__
 from .parser import BillResult
-from .reader import FileFinished, PageDone, PageReader, find_bill_files, has_bill_values, iter_pages
+from .reader import FileFinished, PageDone, PageReader, find_bill_files, has_bill_values, iter_pages, labels_read
 from .record import REVIEW_COLUMN, with_zeros
 
 _KWH = ("尖峰度數", "半尖峰度數", "週六半尖峰度數", "離峰度數")
@@ -99,6 +100,8 @@ def write_csv(
                 _log_page(log, event, time.time() - started)
                 started = time.time()
                 if event.record is None or (event.bill is not None and not has_bill_values(event.bill)):
+                    if event.record is not None:
+                        log.write(f"  結果：只認出 {labels_read(event.bill)} 個台電帳單用語，不像電費頁，略過\n")
                     skipped += 1
                     continue
                 filled = with_zeros(event.record.row)
@@ -171,6 +174,11 @@ def _cell(value: object) -> object:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["watch"]:
+        from .watch import main as watch
+
+        return watch(argv[1:])
     parser = argparse.ArgumentParser(description="Read Taipower bills (PDF, images) to a CSV; without arguments, opens a window")
     parser.add_argument("inputs", nargs="*", help="bill files or folders")
     parser.add_argument("-o", "--output", type=Path, help="the CSV to write; by default bills.csv in the folder")
