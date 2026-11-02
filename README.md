@@ -50,7 +50,15 @@ uv run bill-reader watch sites.csv --once    # 讀完新的、寫完主表就結
 - 同一份主表只能由一台電腦寫，否則 OneDrive 會產生衝突檔。在 SharePoint 網頁上編輯時程式察覺不到，剛好同時寫入仍可能產生衝突檔。
 
 資料庫、`watch.log` 和備份放在 `%LOCALAPPDATA%\BillReader\watch-…`（`--state` 可改），不放在同步資料夾裡。
+
+用 exe 時，兩個 exe 都接受 `watch`。視窗版 `TaipowerBillReader.exe` 不開主控台，適合在背景執行，訊息只寫進 `watch.log`。
 要登入就開始，用 Task Scheduler 設成「登入時」執行，不要做成 Windows 服務：OneDrive 只在使用者登入後同步。
+
+```powershell
+schtasks /Create /TN "Taipower Bill Watch" /SC ONLOGON /RL LIMITED /TR "\"C:\Apps\TaipowerBillReader\TaipowerBillReader.exe\" watch \"C:\Apps\sites.csv\""
+```
+
+停止：工作管理員結束 `TaipowerBillReader.exe`，或 `schtasks /End /TN "Taipower Bill Watch"`。讀到一半停掉沒關係，下次會從沒讀完的檔案繼續。
 
 ## 一頁怎麼被讀
 
