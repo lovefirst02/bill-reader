@@ -23,7 +23,7 @@ _BLOCK_TITLES = {
 }
 
 _INLINE_CHARGES = {
-    "energy_charge_twd": re.compile(r"流動電費\s*[:：]?\s*([+-]?[\d,.]+)\s*元?"),
+    "energy_charge_twd": re.compile(r"^\s*流動電費\s*[:：]?\s*([+-]?[\d,.]+)\s*元?"),
     "total_amount_twd": re.compile(r"^\s*(?:應繳總金額|繳費總金額)\s*[:：]?\s*([+-]?[\d,.]+)\s*元?"),
 }
 
@@ -523,7 +523,8 @@ def _read_labelled(fields: dict[str, Any], field_key: str, aliases: tuple[str, .
         alias = next((alias for alias in aliases if _compact(alias) in compact_text), None)
         if alias is None:
             continue
-        if field_key == "total_amount_twd" and not compact_text.startswith(_compact(alias)):
+        # A label starts its line: 上期流動電費 and 註1:實際流動電費 are not this period's charge.
+        if not compact_text.startswith(_compact(alias)):
             continue
         inline_tail = compact_text[compact_text.find(_compact(alias)) + len(_compact(alias)):]
         value = _parse_value(inline_tail) if inline_tail else None

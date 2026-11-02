@@ -8,6 +8,7 @@ from typing import Any, Iterator
 
 from .parser import BillResult
 from .record import BillRecord, bill_to_record, fill_missing, is_charge_page
+from .vocabulary import NORMAL_LABELS, normal, split_label
 
 PDF_SUFFIXES = {".pdf"}
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
@@ -28,8 +29,30 @@ def count_pages(path: Path) -> int:
         return len(pdf.pages)
 
 
+MIN_LABELS = 2  # a Taipower page read by the models shows at least 3; a water bill or a notice, 0 or 1
+
+
+def labels_read(bill: BillResult) -> int:
+    """How many of a Taipower bill's own words the models found on the page."""
+    found = set()
+    for line in getattr(bill, "ocr_lines", None) or []:
+        text = normal(line.text)
+        if text in NORMAL_LABELS:
+            found.add(text.rstrip(":"))
+        elif split := split_label(text):
+            found.add(split[0].rstrip(":"))
+    return len(found)
+
+
 def has_bill_values(bill: BillResult) -> bool:
-    """A charge page with something of a bill on it: a page of other tables may parse as an empty one."""
+    """A charge page with something of a bill on it: a page of other tables may parse as an empty one.
+
+    Read by the models, it must also show a few of a Taipower bill's words, as a
+    water bill with its own total does not; a PDF's text is only used when its
+    charges are labelled already (pdf_text.py).
+    """
+    if bill.get("quality.source") != "pdf_text" and labels_read(bill) < MIN_LABELS:
+        return False
     return is_charge_page(bill) and any(
         bill.get(path) is not None
         for path in (
