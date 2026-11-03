@@ -21,7 +21,7 @@ uv run python -m bill_reader 帳單資料夾 -o bills.csv         # 命令列
 
 ## 監看 SharePoint 資料夾，寫進主表
 
-在一台常開的電腦上，用 OneDrive 把各 Site 的 Electricity 資料夾同步到本機，再寫一個 `sites.csv`：
+在一台常開的電腦上，用 OneDrive 把各 Site 的 Electricity 資料夾同步到本機，再寫一個 `sites.csv`（exe 的 zip 裡附了一份範例，改成自己的路徑、`Enabled` 改成 `Y` 才會監看）：
 
 ```csv
 Site,Folder,Master,Enabled

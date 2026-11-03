@@ -10,3 +10,4 @@ samples/
 tmp/
 *.csv
 *.log
+!packaging/sites.csv

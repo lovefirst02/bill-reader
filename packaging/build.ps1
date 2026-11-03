@@ -19,6 +19,7 @@ New-Item -ItemType Directory -Force $target | Out-Null
 foreach ($name in (Get-Content models.lock.json -Raw | ConvertFrom-Json).files.PSObject.Properties.Name) {
     Copy-Item (Join-Path $root "models\$name") $target -Force
 }
+Copy-Item (Join-Path $PSScriptRoot "sites.csv") $app -Force  # an example for watch: every row off until edited
 
 $version = (Select-String -Path src\bill_reader\__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
 $zip = Join-Path $root "dist\TaipowerBillReader-$version.zip"
