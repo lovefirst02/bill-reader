@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -196,6 +197,44 @@ class WatchTests(unittest.TestCase):
             self.watcher.run_once()
         self.assertIn("基本電費", said.output[0])
         self.assertEqual(self.master.read_bytes(), before)
+
+    def test_a_workbook_made_by_hand_gets_a_bills_sheet(self):
+        from openpyxl import Workbook
+
+        book = Workbook()
+        book.active.title = "Notes"
+        book.active["A1"] = "kept"
+        book.create_sheet(BILLS)
+        self.master.parent.mkdir(parents=True)
+        book.save(self.master)
+        del book[BILLS]
+        other = self.root / "other.xlsx"
+        book.save(other)
+        self.bill(0, "a.pdf")
+        self.watcher.run_once()
+        self.assertEqual(len(self.sheet()), 1)  # an empty Bills sheet is given its columns
+        self.assertEqual(load_workbook(self.master)["Notes"]["A1"].value, "kept")
+        self.master.unlink()
+        other.rename(self.master)  # no Bills sheet at all
+        self.watcher.close()
+        shutil.rmtree(self.root / "state")
+        self.watcher = self.new_watcher()
+        self.watcher.run_once()
+        book = load_workbook(self.master)
+        self.assertEqual(book.sheetnames[:2], [BILLS, "Notes"])
+        self.assertEqual(len(self.sheet()), 1)
+
+    def test_bills_a_master_refused_reach_it_after_a_restart(self):
+        self.bill(0, "a.pdf")
+        with mock.patch.object(bill_watch, "write_master", side_effect=bill_watch.MasterRefused("broken")), \
+             self.assertLogs("bill_reader.watch", "ERROR"):
+            self.watcher.run_once()
+        self.assertFalse(self.master.exists())
+        self.watcher.close()
+        self.watcher = self.new_watcher()
+        self.watcher.run_once()  # no new file: what was read before is written
+        self.assertEqual(self.reads.read, ["a.pdf"])
+        self.assertEqual(len(self.sheet()), 1)
 
     def test_a_master_open_in_excel_is_written_later(self):
         self.bill(0, "a.pdf")

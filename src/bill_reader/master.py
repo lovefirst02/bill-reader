@@ -116,13 +116,21 @@ def _last_row(sheet: Worksheet, header: int) -> int:
 
 def _new_workbook() -> Workbook:
     book = Workbook()
-    sheet = book.active
-    sheet.title = BILLS
-    sheet.append(MASTER_COLUMNS)
-    sheet.freeze_panes = "C2"
-    for number, name in enumerate(MASTER_COLUMNS, start=1):
-        sheet.column_dimensions[get_column_letter(number)].width = max(10, min(28, len(name) * 1.6))
+    book.active.title = BILLS
+    _start_bills(book.active)
     return book
+
+
+def _is_empty(sheet: Worksheet) -> bool:
+    return all(cell.value in (None, "") for row in sheet.iter_rows() for cell in row)
+
+
+def _start_bills(sheet: Worksheet) -> None:
+    """The column names in the first row of an empty sheet."""
+    for number, name in enumerate(MASTER_COLUMNS, start=1):
+        sheet.cell(1, number, name)
+        sheet.column_dimensions[get_column_letter(number)].width = max(10, min(28, len(name) * 1.6))
+    sheet.freeze_panes = "C2"
 
 
 def _rewrite_sheet(book: Workbook, title: str, columns: tuple[str, ...], rows: list[list[Any]]) -> None:
@@ -179,9 +187,11 @@ def write_master(
         raise MasterLocked(f"{path.name} is open")
     before = path.stat() if path.exists() else None
     book = load_workbook(path) if before else _new_workbook()
-    if BILLS not in book.sheetnames:
-        raise MasterRefused(f"no sheet named {BILLS}")
+    if BILLS not in book.sheetnames:  # a workbook made by hand to hold the bills: other sheets stay as they are
+        _start_bills(book.create_sheet(BILLS, 0))
     sheet = book[BILLS]
+    if _is_empty(sheet):
+        _start_bills(sheet)
     header, names = _find_header(sheet)
     missing = [column for column in MASTER_COLUMNS if column not in names]
     if missing:

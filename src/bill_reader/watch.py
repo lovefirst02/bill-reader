@@ -150,6 +150,11 @@ class Watcher:
         self.dirty: set[str] = set()
         self.written: dict[str, float] = {}
         self.unseen: set[str] = set()
+        for site in sites:  # bills read last time but not yet in a master, as when it could not be written
+            key = self._master_key(site)
+            if self.db.execute("SELECT 1 FROM bills WHERE site = ? AND id NOT IN (SELECT id FROM placed WHERE master = ?)",
+                               (site.name, key)).fetchone():
+                self.dirty.add(key)
 
     @staticmethod
     def _master_key(site: Site) -> str:
