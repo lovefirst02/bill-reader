@@ -562,10 +562,17 @@ def _period_of(user_lines: list[OcrLine], ordered: list[OcrLine]) -> dict[str, s
 def _repair_charges(charges: dict[str, Any], user: dict[str, Any], charge_lines: list[OcrLine], ordered: list[OcrLine], warnings: list[str]) -> None:
     """What the bill's own arithmetic says about values misread or not read."""
     basic_charge, energy_charge = charges.get("basic_charge_twd"), charges.get("energy_charge_twd")
-    if isinstance(basic_charge, (int, float)) and isinstance(energy_charge, (int, float)) and basic_charge < 1000:
+    pretax, power_factor_charge = charges.get("pretax_total_twd"), charges.get("power_factor_adjustment_twd") or 0
+    if (
+        all(isinstance(value, (int, float)) for value in (basic_charge, energy_charge, pretax, power_factor_charge))
+        and basic_charge < 1000
+    ):
+        # A scan may lose a basic charge's digits; a small one read right stays, so a
+        # stray number replaces it only where it, and not what was read, adds up to the pre-tax total.
+        adds_up = lambda basic: abs(basic + energy_charge + power_factor_charge - pretax) <= 1
         standalone = [_parse_value(line.text) for line in charge_lines if re.fullmatch(r"\s*[+-]?\d[\d,]*(?:[.·。]\d+)?\s*", line.text)]
-        plausible = [value for value in standalone if isinstance(value, (int, float)) and 1000 <= value < energy_charge]
-        if plausible:
+        plausible = [value for value in standalone if isinstance(value, (int, float)) and 1000 <= value < energy_charge and adds_up(value)]
+        if plausible and not adds_up(basic_charge):
             charges["basic_charge_twd"] = plausible[0]
             warnings.append("basic_charge_recovered_from_scan")
 

@@ -283,6 +283,30 @@ class BillLayoutParserTests(unittest.TestCase):
         self.assertEqual(result.get("user_info.billing_period.start"), "113/02/06")
         self.assertEqual(result.get("user_info.billing_period.end"), "113/04/09")
 
+    @staticmethod
+    def _charges(basic: str, stray: str, pretax: str):
+        """A charge block with a stray standalone number below it; made-up amounts."""
+        return parse_bill_layout([
+            OcrLine("計費內容 Charge Info.", 600, 300, 200, 24),
+            OcrLine("基本電費", 600, 340, 90, 20),
+            OcrLine(basic, 900, 340, 60, 20),
+            OcrLine("流動電費", 600, 370, 90, 20),
+            OcrLine("5,000", 900, 370, 60, 20),
+            OcrLine("稅前應繳總金額", 600, 400, 150, 20),
+            OcrLine(pretax, 900, 400, 60, 20),
+            OcrLine(stray, 900, 460, 60, 20),
+        ])
+
+    def test_a_small_basic_charge_read_right_is_kept(self):
+        result = self._charges("262", "1,234", "5,262")
+        self.assertEqual(result.get("charge_info.basic_charge_twd"), 262)
+        self.assertNotIn("basic_charge_recovered_from_scan", result.get("quality.warnings"))
+
+    def test_a_basic_charge_that_lost_its_digits_is_taken_from_the_sum(self):
+        result = self._charges("12", "1,234", "6,234")
+        self.assertEqual(result.get("charge_info.basic_charge_twd"), 1234)
+        self.assertIn("basic_charge_recovered_from_scan", result.get("quality.warnings"))
+
 
 if __name__ == "__main__":
     unittest.main()
