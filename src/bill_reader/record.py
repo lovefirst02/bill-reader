@@ -105,6 +105,37 @@ def _total_issue(row: Mapping[str, Any], tax: Any) -> Issue | None:
     return Issue(f"應繳總金額與稅前金額＋營業稅不符（預期約 {expected:,}）", ["應繳總金額", "稅前應繳總金額"])
 
 
+def _tax_fits(pretax: Any, tax: Any) -> bool:
+    """營業稅 is 5% of the pre-tax total, rounded."""
+    return _is_number(pretax) and pretax > 0 and _is_number(tax) and abs(round(pretax * 0.05) - tax) <= 1
+
+
+def _settle_pretax(row: dict[str, Any], tax: Any) -> Issue | None:
+    """稅前應繳總金額 worked out from 應繳總金額 where it was not read; where the two
+    disagree, the tax tells which was misread, and that one is replaced.
+
+    A prepayment makes the total rightly differ, so a bill with one is left as read.
+    """
+    pretax, total = row["稅前應繳總金額"], row["應繳總金額"]
+    if row["預繳費用"] or not _is_number(total) or total <= 0:
+        return None
+    less_tax = total - tax if _is_number(tax) else None
+    if pretax is None:
+        # The tax is rounded, so the pre-tax total is always the total over 1.05, rounded.
+        row["稅前應繳總金額"] = round(less_tax) if _tax_fits(less_tax, tax) else round(total / 1.05)
+        return Issue("稅前應繳總金額由應繳總金額推算", ["稅前應繳總金額"])
+    if not _is_number(pretax) or _total_issue(row, tax) is None:
+        return None
+    # Both columns are named: the two disagreed as read, which a PDF's text must not (pdf_text.py).
+    if _tax_fits(less_tax, tax):
+        row["稅前應繳總金額"] = round(less_tax)
+        return Issue(f"稅前應繳總金額與應繳總金額、營業稅不符，改用應繳總金額－營業稅（讀到 {pretax:,}）", ["稅前應繳總金額", "應繳總金額"])
+    if _tax_fits(pretax, tax):
+        row["應繳總金額"] = round(pretax + tax)
+        return Issue(f"應繳總金額與稅前應繳總金額、營業稅不符，改用稅前應繳總金額＋營業稅（讀到 {total:,}）", ["應繳總金額", "稅前應繳總金額"])
+    return None
+
+
 def _drop_misread_minus(row: dict[str, Any]) -> None:
     """A speck before the total can read as a minus: the pre-tax total says when it was."""
     pretax, total = row["稅前應繳總金額"], row["應繳總金額"]
@@ -185,6 +216,8 @@ def bill_to_record(bill: BillResult, source: str | None = None) -> BillRecord:
         issues.append(period_issue)
 
     _drop_misread_minus(row)
+    if pretax_issue := _settle_pretax(row, tax):
+        issues.append(pretax_issue)
     missing = recompute_other_adjustment(row)
     if missing:
         issues.append(Issue(f"其他調整費用無法計算：缺少{'、'.join(missing)}", [*missing, "其他調整費用"]))

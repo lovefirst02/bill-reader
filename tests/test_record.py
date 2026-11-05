@@ -112,8 +112,30 @@ class ExcelRowTests(unittest.TestCase):
         del bill["user_info"]["energy_consumption"]
         self.assertNotIn("缺少計費度數", bill_to_row(bill)["需人工檢查"] or "")
 
-    def test_a_pre_tax_total_not_read_is_flagged(self):
-        self.assertIn("缺少稅前應繳總金額", bill_to_row(high_voltage_bill(pretax_total_twd=None))["需人工檢查"])
+    def test_a_pre_tax_total_not_read_is_the_total_less_its_tax(self):
+        row = bill_to_row(high_voltage_bill(pretax_total_twd=None))
+        self.assertEqual(row["稅前應繳總金額"], 761905)
+        self.assertEqual(row["需人工檢查"], "稅前應繳總金額由應繳總金額推算")
+
+    def test_a_pre_tax_total_not_read_nor_its_tax_is_the_total_over_1_05(self):
+        row = bill_to_row(high_voltage_bill(pretax_total_twd=None, business_tax_twd=None, total_amount_twd=800001))
+        self.assertEqual(row["稅前應繳總金額"], 761906)  # 761906 + its 5%, 38095, is 800001
+
+    def test_a_pre_tax_total_is_not_worked_out_past_a_prepayment(self):
+        row = bill_to_row(high_voltage_bill(pretax_total_twd=None, prepaid_applied_twd=-3000, total_amount_twd=797000))
+        self.assertIsNone(row["稅前應繳總金額"])
+        self.assertIn("缺少稅前應繳總金額", row["需人工檢查"])
+
+    def test_a_misread_pre_tax_total_the_total_and_tax_agree_on_is_replaced(self):
+        row = bill_to_row(high_voltage_bill(pretax_total_twd=767905))
+        self.assertEqual(row["稅前應繳總金額"], 761905)
+        self.assertIn("改用應繳總金額－營業稅（讀到 767,905）", row["需人工檢查"])
+
+    def test_a_misread_total_the_pre_tax_total_and_tax_agree_on_is_replaced(self):
+        row = bill_to_row(high_voltage_bill(total_amount_twd=120000))
+        self.assertEqual(row["應繳總金額"], 800000)
+        self.assertIn("改用稅前應繳總金額＋營業稅（讀到 120,000）", row["需人工檢查"])
+        self.assertEqual(row["其他調整費用"], 5000)  # worked out from the total put right
 
     def test_a_bill_prepayment_paid_prints_no_pre_tax_total(self):
         row = bill_to_row(high_voltage_bill(pretax_total_twd=None, total_amount_twd=0))
@@ -153,8 +175,14 @@ class ExcelRowTests(unittest.TestCase):
         bill["user_info"]["billing_period"] = {"start": "113/04/30", "end": "113/04/01"}
         self.assertIn("計費期間起訖異常", bill_to_row(bill)["需人工檢查"])
 
-    def test_flags_total_inconsistent_with_pretax(self):
-        row = bill_to_row(high_voltage_bill(total_amount_twd=120000))
+    def test_flags_total_inconsistent_with_pretax_where_the_tax_backs_neither(self):
+        row = bill_to_row(high_voltage_bill(total_amount_twd=120000, business_tax_twd=1710))
+        self.assertEqual((row["稅前應繳總金額"], row["應繳總金額"]), (761905, 120000))
+        self.assertIn("應繳總金額與稅前金額", row["需人工檢查"])
+
+    def test_flags_total_inconsistent_with_pretax_where_no_tax_was_read(self):
+        row = bill_to_row(high_voltage_bill(total_amount_twd=120000, business_tax_twd=None))
+        self.assertEqual(row["應繳總金額"], 120000)
         self.assertIn("應繳總金額與稅前金額", row["需人工檢查"])
 
     def test_misread_tax_does_not_flag_consistent_total(self):
