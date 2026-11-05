@@ -149,6 +149,20 @@ class DetailedHighVoltageBillTests(unittest.TestCase):
             },
         )
 
+    def test_a_peak_row_printed_as_regular_peak_is_read_even_at_zero(self):
+        """Catches 經常(尖峰)度數 being skipped, which left a 0 peak flagged as missing."""
+        lines = list(self.lines)
+        lines[lines.index(next(line for line in lines if line.text == "尖峰度數："))] = OcrLine("經常(尖峰)度數：", 182, 676, 140, 21)
+        lines[lines.index(next(line for line in lines if line.text == "128210"))] = OcrLine("0", 328, 676, 12, 21)
+
+        result = parse_bill_layout(lines)
+
+        self.assertEqual(
+            result.get("energy_usage.energy_consumption"),
+            {"peak_kwh": 0, "off_peak_kwh": 140054},
+        )
+        self.assertEqual(result.get("energy_usage.transferred_energy.peak_kwh"), 31190)
+
     def test_boundary_adjacent_peak_belongs_to_transfer_group(self):
         """Catches the first transfer row being pulled into billed consumption."""
         result = parse_bill_layout(self.lines)

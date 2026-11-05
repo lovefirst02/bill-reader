@@ -86,7 +86,8 @@ def parse_energy_table(usage_lines: list[OcrLine]) -> dict[str, Any]:
         ("saturday_semi_peak_kwh", ("週六半尖峰度數", "调六半尖峰度數", "遇六半尖峰度數")),
         ("semi_peak_kwh", ("半尖峰度數",)),
         ("off_peak_kwh", ("離峰度數",)),
-        ("peak_kwh", ("尖峰度數",)),
+        # Some bills print the peak row as 經常(尖峰)度數.
+        ("peak_kwh", ("經常尖峰度數", "尖峰度數")),
     )
     for line in sorted(usage_lines, key=lambda item: (item.y, item.x)):
         if line.y >= current_usage_end:
