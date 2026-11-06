@@ -211,12 +211,14 @@ def _energy_groups(
             candidate.y for _, candidate in headers if candidate.y > header.y
         ]
         bottom = min(following_headers, default=float("inf"))
-        section = [line for line in lines if header.y < line.y < bottom]
+        # A row can share its heading's line (計費度數 | 經常(尖峰)度數 8800).
+        top = header.y - header.height / 4
+        section = [line for line in lines if line is not header and top < line.y < bottom]
         value_section = _dedupe_nearby_ocr_lines(
             [
                 line
                 for line in (value_candidates or lines)
-                if header.y < line.y < bottom
+                if line is not header and top < line.y < bottom
             ]
         )
         values: dict[str, Any] = {}
@@ -676,6 +678,12 @@ def _parse_layout(lines: Iterable[OcrLine]) -> BillResult:
         warnings.extend(group_warnings)
         if period := _period_of(user_lines, ordered):
             fields["user_info"]["billing_period"] = period
+    elif headers:
+        # The block's heading was not read: its kWh rows still sit under 計費度數.
+        groups, group_warnings = _energy_groups(ordered, ordered)
+        if groups:
+            fields["user_info"] = groups
+            warnings.extend(group_warnings)
 
     _repair_charges(fields.get("charge_info", {}), fields.get("user_info", {}), assigned.get("charge_info", []), ordered, warnings)
 

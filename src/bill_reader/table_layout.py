@@ -68,15 +68,18 @@ def parse_energy_table(usage_lines: list[OcrLine]) -> dict[str, Any]:
 
     billed_group = find_label("計費度數")
     transferred_group = find_label("轉供度數")
-    if not (billed_group and transferred_group):
+    if billed_group is None:
         return {}
     fields: dict[str, Any] = {}
-    billed_center = billed_group.y + billed_group.height / 2
-    transferred_center = transferred_group.y + transferred_group.height / 2
-    # Group captions are vertically centred across multiple rows.  Bias the
-    # midpoint slightly toward the earlier group so a boundary-adjacent row
-    # becomes the first row of 轉供度數 instead of the last 計費度數 row.
-    transfer_start = (billed_center + transferred_center) / 2 - min(billed_group.height, transferred_group.height) / 4
+    # A bill with no transfers prints no 轉供度數: every row is billed.
+    transfer_start = float("inf")
+    if transferred_group is not None:
+        billed_center = billed_group.y + billed_group.height / 2
+        transferred_center = transferred_group.y + transferred_group.height / 2
+        # Group captions are vertically centred across multiple rows.  Bias the
+        # midpoint slightly toward the earlier group so a boundary-adjacent row
+        # becomes the first row of 轉供度數 instead of the last 計費度數 row.
+        transfer_start = (billed_center + transferred_center) / 2 - min(billed_group.height, transferred_group.height) / 4
     following_aliases = ("經常尖峰契約", "經常尖峰需量", "半尖峰非夏月需量", "離峰需量", "功率因數", "調整係數", "前期轉供度數")
     current_usage_end = min(
         (line.y for line in usage_lines if any(_compact(line.text).startswith(_compact(alias)) for alias in following_aliases)),

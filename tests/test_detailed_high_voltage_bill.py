@@ -163,6 +163,42 @@ class DetailedHighVoltageBillTests(unittest.TestCase):
         )
         self.assertEqual(result.get("energy_usage.transferred_energy.peak_kwh"), 31190)
 
+    def test_a_bill_with_no_transfers_has_its_rows_billed(self):
+        """Catches the whole usage table being dropped when 轉供度數 is not printed."""
+        lines = [
+            OcrLine("基本資料", 203, 85, 136, 35),
+            OcrLine("計費內容", 648, 85, 133, 35),
+            OcrLine("用電資料", 216, 642, 129, 32),
+            OcrLine("電表資料", 647, 640, 128, 32),
+            OcrLine("計費度數", 65, 686, 79, 21),
+            OcrLine("經常(尖峰)度數：", 182, 686, 140, 21),
+            OcrLine("8800", 328, 686, 50, 21),
+            OcrLine("底度：", 65, 710, 50, 21),
+            OcrLine("120", 328, 710, 38, 21),
+            OcrLine("功率因數(%)：", 65, 734, 120, 21),
+            OcrLine("100", 328, 734, 38, 21),
+        ]
+
+        result = parse_bill_layout(lines)
+
+        self.assertEqual(result.get("energy_usage.energy_consumption"), {"peak_kwh": 8800})
+        self.assertIsNone(result.get("energy_usage.transferred_energy"))
+
+    def test_kwh_rows_whose_block_heading_was_lost_are_still_read(self):
+        """Catches the rows going to 電表資料 when glare hides 基本資料 and 用電資料."""
+        lines = [
+            OcrLine("計費內容", 648, 85, 133, 35),
+            OcrLine("電表資料", 647, 640, 128, 32),
+            OcrLine("計費度數", 65, 686, 79, 21),
+            OcrLine("經常(尖峰)度數:8800", 182, 686, 200, 21),
+            OcrLine("底度:", 65, 710, 50, 21),
+            OcrLine("120", 328, 710, 38, 21),
+        ]
+
+        result = parse_bill_layout(lines)
+
+        self.assertEqual(result.get("user_info.energy_consumption"), {"peak_kwh": 8800})
+
     def test_boundary_adjacent_peak_belongs_to_transfer_group(self):
         """Catches the first transfer row being pulled into billed consumption."""
         result = parse_bill_layout(self.lines)
