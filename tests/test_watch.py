@@ -9,7 +9,7 @@ from unittest import mock
 from openpyxl import load_workbook
 
 from bill_reader import watch as bill_watch
-from bill_reader.master import BILLS, CHANGES, FILES, ID, MasterLocked, write_master
+from bill_reader.master import BILLS, CHANGES, FILES, ID, MASTER_COLUMNS, MasterLocked, write_master
 from bill_reader.reader import FileFinished, PageDone
 from bill_reader.record import BillRecord
 from bill_reader.watch import Site, Watcher, load_sites
@@ -197,6 +197,23 @@ class WatchTests(unittest.TestCase):
             self.watcher.run_once()
         self.assertIn("基本電費", said.output[0])
         self.assertEqual(self.master.read_bytes(), before)
+
+    def test_a_master_made_before_other_adjustments_gets_the_column_at_its_end(self):
+        from openpyxl import Workbook
+
+        book = Workbook()
+        book.active.title = BILLS
+        book.active.append([column for column in MASTER_COLUMNS if column != "其他調整費用"])
+        book.active.append(["old-1", "North", "114/01/01~114/01/31", "00-00-0000-00-7"])
+        self.master.parent.mkdir(parents=True)
+        book.save(self.master)
+        self.bill(0, "a.pdf")
+        self.watcher.run_once()
+        header = [cell.value for cell in load_workbook(self.master)[BILLS][1]]
+        self.assertEqual(header[-1], "其他調整費用")
+        rows = self.sheet()
+        self.assertEqual([row["其他調整費用"] for row in rows], [None, 0])  # a row already there stays as it was
+        self.assertEqual(self.sheet(CHANGES), [])
 
     def test_a_workbook_made_by_hand_gets_a_bills_sheet(self):
         from openpyxl import Workbook

@@ -52,6 +52,15 @@ class PrepaidChargeTests(unittest.TestCase):
                     result = bill([("流動電費", "1000元"), ("本期預繳", prepaid), ("應繳總金額", total)])
                     self.assertEqual(result.get("charge_info.total_amount_twd"), int(total[:-1]))
 
+    def test_both_balances_are_read_on_both_layouts(self):
+        for detailed in (False, True):
+            with self.subTest(detailed=detailed):
+                result = bill([("流動電費", "1,000.0元"), ("上期預繳餘額", "-9,000.0元"), ("繳費總金額", "0元"),
+                               ("本期預繳餘額", "8000.0元")], detailed)
+                self.assertEqual(result.get("charge_info.previous_prepaid_balance_twd"), -9000)
+                self.assertEqual(result.get("charge_info.current_prepaid_balance_twd"), 8000)
+                self.assertIsNone(result.get("charge_info.prepaid_applied_twd"))
+
     def test_missing_total_is_not_guessed_from_prepaid_amount(self):
         result = bill([("流動電費", "1,000元"), ("本期預繳", "-1,000元")])
         self.assertIsNone(result.get("charge_info.total_amount_twd"))

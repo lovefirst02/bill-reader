@@ -121,6 +121,8 @@ _CHARGES = {
     "pretax_total_twd": ("稅前應繳總金額",),
     "business_tax_twd": ("營業稅",),
     "total_amount_twd": ("應繳總金額", "繳費總金額"),
+    "previous_prepaid_balance_twd": ("上期預繳餘額",),
+    "current_prepaid_balance_twd": ("本期預繳餘額",),
 }
 
 

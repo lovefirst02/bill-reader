@@ -31,6 +31,8 @@ FILE_COLUMNS = (SITE, SOURCE, "狀態", "帳單頁數", "需人工檢查", "讀�
 PERIOD, METER = "Billing Period 計費期間", "Custom No. 電號"
 _FIGURES = tuple(column for column in CSV_COLUMNS if column not in (PERIOD, METER))
 _HEADER_SEARCH = 10
+# Columns added after masters were first made: an older master gets them at its right end.
+_ADDED_LATER = ("其他調整費用",)
 BACKUPS_KEPT = 10
 
 
@@ -193,6 +195,10 @@ def write_master(
     if _is_empty(sheet):
         _start_bills(sheet)
     header, names = _find_header(sheet)
+    for column in _ADDED_LATER:
+        if column not in names:
+            names[column] = max(names.values()) + 1
+            sheet.cell(header, names[column], column)
     missing = [column for column in MASTER_COLUMNS if column not in names]
     if missing:
         raise MasterRefused(f"columns missing from sheet {BILLS}: {', '.join(missing)}")

@@ -114,10 +114,23 @@ def _settle_pretax(row: dict[str, Any], tax: Any) -> Issue | None:
     """稅前應繳總金額 worked out from 應繳總金額 where it was not read; where the two
     disagree, the tax tells which was misread, and that one is replaced.
 
-    A prepayment makes the total rightly differ, so a bill with one is left as read.
+    A prepayment is taken off the total, so with one the total plus the prepayment is
+    the pre-tax total and its tax; one read is left as read, since either may be misread.
     """
-    pretax, total = row["稅前應繳總金額"], row["應繳總金額"]
-    if row["預繳費用"] or not _is_number(total) or total <= 0:
+    pretax, total, prepaid = row["稅前應繳總金額"], row["應繳總金額"], row["預繳費用"]
+    if prepaid:
+        if pretax is not None or not (_is_number(total) and _is_number(prepaid)) or total < 0:
+            return None
+        # Printed as a deduction; a lost minus is still one.
+        before_prepaid = total + abs(prepaid)
+        if _is_number(tax):
+            if not _tax_fits(before_prepaid - tax, tax):
+                return None
+            row["稅前應繳總金額"] = round(before_prepaid - tax)
+        else:
+            row["稅前應繳總金額"] = round(before_prepaid / 1.05)
+        return Issue("稅前應繳總金額由應繳總金額＋預繳費用推算", ["稅前應繳總金額"])
+    if not _is_number(total) or total <= 0:
         return None
     less_tax = total - tax if _is_number(tax) else None
     if pretax is None:
@@ -134,6 +147,28 @@ def _settle_pretax(row: dict[str, Any], tax: Any) -> Issue | None:
         row["應繳總金額"] = round(pretax + tax)
         return Issue(f"應繳總金額與稅前應繳總金額、營業稅不符，改用稅前應繳總金額＋營業稅（讀到 {total:,}）", ["應繳總金額", "稅前應繳總金額"])
     return None
+
+
+_BALANCES = ("charge_info.previous_prepaid_balance_twd", "charge_info.current_prepaid_balance_twd")
+
+
+def _spent_from_prepayment(row: dict[str, Any], bill: BillResult) -> Issue | None:
+    """A bill paid from a prepaid balance prints only what is left to pay, often 0:
+    the balance it used is added back, so 應繳總金額 is what the period cost.
+
+    A bill that prints the amount it applied (本期預繳) keeps it in 預繳費用 instead.
+    """
+    before, after = (bill.get(path) for path in _BALANCES)
+    total = row["應繳總金額"]
+    if row["預繳費用"] or not (_is_number(before) and _is_number(after) and _is_number(total)) or total < 0:
+        return None
+    # The earlier balance is printed as a deduction, the later one as left over.
+    used = round(abs(before) - abs(after), 2)
+    used = int(used) if float(used).is_integer() else used
+    if used <= 0:
+        return None
+    row["應繳總金額"] = total + used
+    return Issue(f"應繳總金額由預繳餘額推算：帳單繳費 {total:,}＋使用預繳 {used:,}（上期 {abs(before):,}－本期 {abs(after):,}）", ["應繳總金額"])
 
 
 def _drop_misread_minus(row: dict[str, Any]) -> None:
@@ -196,9 +231,10 @@ def fill_missing(bill: BillResult, other: BillResult) -> list[str]:
     filled = [column for column, value in theirs.items() if value is not None and ours[column] is None]
     for column in filled:
         _store(bill, _VALUE_PATHS[column], theirs[column])
-    tax = other.get("charge_info.business_tax_twd")
-    if tax is not None and bill.get("charge_info.business_tax_twd") is None:
-        _store(bill, "charge_info.business_tax_twd", tax)
+    for path in ("charge_info.business_tax_twd", *_BALANCES):
+        value = other.get(path)
+        if value is not None and bill.get(path) is None:
+            _store(bill, path, value)
     return filled
 
 
@@ -216,6 +252,8 @@ def bill_to_record(bill: BillResult, source: str | None = None) -> BillRecord:
         issues.append(period_issue)
 
     _drop_misread_minus(row)
+    if spent_issue := _spent_from_prepayment(row, bill):
+        issues.append(spent_issue)
     if pretax_issue := _settle_pretax(row, tax):
         issues.append(pretax_issue)
     missing = recompute_other_adjustment(row)

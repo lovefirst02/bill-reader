@@ -40,6 +40,8 @@ _FIELDS: dict[str, dict[str, tuple[str, ...]]] = {
     "charge_info": {
         "basic_charge_twd": ("基本電費約定", "基本電費"),
         "prepaid_applied_twd": ("本期預繳金額", "本期預繳"),
+        "previous_prepaid_balance_twd": ("上期預繳餘額",),
+        "current_prepaid_balance_twd": ("本期預繳餘額",),
         "energy_charge_twd": ("流動電費", "流動費"),
         "power_factor_adjustment_twd": ("功率因數調整費",),
         "pretax_total_twd": ("稅前應繳總金額",),
