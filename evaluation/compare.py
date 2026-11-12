@@ -4,7 +4,7 @@
     python evaluation/compare.py check   ref.json files.txt     # after: exit 1 if anything differs
 
 ``files.txt`` lists one bill file per line. The models' answers are cached in
-tmp/model_cache, so only the first run is slow, and a change to the parser is
+tmp/model_cache, one folder per set of models, so only the first run is slow, and a change to the parser is
 checked in a few minutes. Keep the lists and references out of Git: they hold bills.
 """
 
@@ -28,13 +28,19 @@ class CachedEngine:
     """The engine's answers from disk, asking the models only about what is new."""
 
     def __init__(self) -> None:
-        CACHE.mkdir(parents=True, exist_ok=True)
+        # Each set of models keeps its own answers: a new model must not be handed the old one's.
+        models = model_dir()
+        digest = hashlib.sha256()
+        for name in sorted(path.name for path in models.iterdir() if path.suffix in (".onnx", ".json")):
+            digest.update(name.encode() + (models / name).read_bytes())
+        self.cache = CACHE / digest.hexdigest()[:12]
+        self.cache.mkdir(parents=True, exist_ok=True)
         self.real: OnnxEngine | None = None
         self.last_read = None
 
     def _answer(self, kind: str, source, ask):
         data = source.tobytes() + repr(source.shape).encode() if isinstance(source, np.ndarray) else Path(source).read_bytes()
-        path = CACHE / f"{kind}-{hashlib.sha256(data).hexdigest()[:32]}.pkl"
+        path = self.cache / f"{kind}-{hashlib.sha256(data).hexdigest()[:32]}.pkl"
         if path.is_file():
             return pickle.loads(path.read_bytes())
         self.real = self.real or OnnxEngine(model_dir())
