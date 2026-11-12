@@ -1,9 +1,9 @@
 {
     "repository":  "lovefirst02/bill-models",
-    "version":  "v1.0.0",
+    "version":  "v1.1.0",
     "files":  {
                   "bill_detector.onnx":  "0d341eb54d515ca898540bbc6a94e7ab91bcc0a7efb9133960c6c8da6cbef557",
-                  "bill_reader.onnx":  "6db4ab0b800b3aa5123425dd47da317b463821332c311b1a898287764c2efeea",
-                  "bill_reader.chars.json":  "4093aa4ec1145fca7e857c551a3af3a1e75e3048bedb44222913fef1e9dbff34"
+                  "bill_reader.onnx":  "3bdfa960d69bb0b772282f326955781f644a636b9fbdb0b62187eb602a0fae10",
+                  "bill_reader.chars.json":  "579f9e062076dea7d6d67e967aaf2bd71895c7a67a1d42256d14d083a0d8ff21"
               }
 }
