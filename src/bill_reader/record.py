@@ -152,23 +152,39 @@ def _settle_pretax(row: dict[str, Any], tax: Any) -> Issue | None:
 _BALANCES = ("charge_info.previous_prepaid_balance_twd", "charge_info.current_prepaid_balance_twd")
 
 
-def _spent_from_prepayment(row: dict[str, Any], bill: BillResult) -> Issue | None:
+def _spent_from_prepayment(row: dict[str, Any], bill: BillResult, tax: Any) -> Issue | None:
     """A bill paid from a prepaid balance prints only what is left to pay, often 0:
     the balance it used is added back, so 應繳總金額 is what the period cost.
 
-    A bill that prints the amount it applied (本期預繳) keeps it in 預繳費用 instead.
+    The balance used is counted as pre-tax too (the user's choice): 稅前應繳總金額 is
+    what the bill shows before tax plus the balance used. A bill that prints the
+    earlier balance and no later one used it all. A bill that prints the amount it
+    applied (本期預繳) keeps it in 預繳費用 instead.
     """
     before, after = (bill.get(path) for path in _BALANCES)
-    total = row["應繳總金額"]
-    if row["預繳費用"] or not (_is_number(before) and _is_number(after) and _is_number(total)) or total < 0:
+    total, pretax = row["應繳總金額"], row["稅前應繳總金額"]
+    if row["預繳費用"] or not (_is_number(before) and _is_number(total)) or total < 0:
+        return None
+    unprinted = after is None
+    if unprinted:
+        after = 0
+    elif not _is_number(after):
         return None
     # The earlier balance is printed as a deduction, the later one as left over.
     used = round(abs(before) - abs(after), 2)
     used = int(used) if float(used).is_integer() else used
     if used <= 0:
         return None
+    if not _is_number(pretax):
+        # A bill its balance paid in full prints no pre-tax total and no tax.
+        pretax = 0 if total == 0 else round(total - tax) if _is_number(tax) else round(total / 1.05)
     row["應繳總金額"] = total + used
-    return Issue(f"應繳總金額由預繳餘額推算：帳單繳費 {total:,}＋使用預繳 {used:,}（上期 {abs(before):,}－本期 {abs(after):,}）", ["應繳總金額"])
+    row["稅前應繳總金額"] = pretax + used
+    text = (f"應繳總金額、稅前應繳總金額由預繳餘額推算：使用預繳 {used:,}（上期 {abs(before):,}－本期 {abs(after):,}），"
+            f"帳單繳費 {total:,}、稅前 {pretax:,} 各加上使用預繳")
+    if unprinted:
+        text += "；未讀到本期預繳餘額，視為 0"
+    return Issue(text, ["應繳總金額", "稅前應繳總金額"])
 
 
 def _drop_misread_minus(row: dict[str, Any]) -> None:
@@ -252,9 +268,11 @@ def bill_to_record(bill: BillResult, source: str | None = None) -> BillRecord:
         issues.append(period_issue)
 
     _drop_misread_minus(row)
-    if spent_issue := _spent_from_prepayment(row, bill):
+    spent_issue = _spent_from_prepayment(row, bill, tax)
+    if spent_issue:
+        # Both totals were just worked out together; they no longer follow the 5% tax.
         issues.append(spent_issue)
-    if pretax_issue := _settle_pretax(row, tax):
+    elif pretax_issue := _settle_pretax(row, tax):
         issues.append(pretax_issue)
     missing = recompute_other_adjustment(row)
     if missing:
@@ -262,7 +280,7 @@ def bill_to_record(bill: BillResult, source: str | None = None) -> BillRecord:
     elif not _is_number(row["功率因數調整費"]):
         issues.append(Issue("未辨識功率因數調整費，其他調整費用以 0 計算", ["功率因數調整費"]))
 
-    if total_issue := _total_issue(row, tax):
+    if not spent_issue and (total_issue := _total_issue(row, tax)):
         issues.append(total_issue)
 
     for label in ("Billing Period 計費期間", "Custom No. 電號", "應繳總金額", "稅前應繳總金額"):

@@ -156,14 +156,31 @@ class ExcelRowTests(unittest.TestCase):
                                  previous_prepaid_balance_twd=-900000, current_prepaid_balance_twd=100000)
         row = bill_to_row(bill)
         self.assertEqual(row["應繳總金額"], 800000)
-        self.assertEqual(row["稅前應繳總金額"], 761905)
+        # The balance used counts as pre-tax.
+        self.assertEqual(row["稅前應繳總金額"], 800000)
         self.assertIsNone(row["預繳費用"])
         self.assertEqual(row["其他調整費用"], 5000)
-        self.assertIn("應繳總金額由預繳餘額推算：帳單繳費 0＋使用預繳 800,000（上期 900,000－本期 100,000）", row["需人工檢查"])
+        self.assertIn("使用預繳 800,000（上期 900,000－本期 100,000）", row["需人工檢查"])
+        self.assertNotIn("不符", row["需人工檢查"])
 
-    def test_a_bill_partly_paid_from_its_balance_adds_what_it_used(self):
-        bill = high_voltage_bill(total_amount_twd=300000, previous_prepaid_balance_twd=-500000, current_prepaid_balance_twd=0)
-        self.assertEqual(bill_to_row(bill)["應繳總金額"], 800000)
+    def test_a_bill_partly_paid_from_its_balance_adds_what_it_used_to_both_totals(self):
+        bill = high_voltage_bill(total_amount_twd=4010, pretax_total_twd=3820, business_tax_twd=190,
+                                 previous_prepaid_balance_twd=-5780, current_prepaid_balance_twd=0)
+        row = bill_to_row(bill)
+        self.assertEqual((row["應繳總金額"], row["稅前應繳總金額"]), (9790, 9600))
+        self.assertNotIn("不符", row["需人工檢查"])
+
+    def test_a_bill_printing_no_later_balance_used_all_of_it(self):
+        bill = high_voltage_bill(total_amount_twd=4010, pretax_total_twd=3820, business_tax_twd=190,
+                                 previous_prepaid_balance_twd=-5780)
+        row = bill_to_row(bill)
+        self.assertEqual((row["應繳總金額"], row["稅前應繳總金額"]), (9790, 9600))
+        self.assertIn("未讀到本期預繳餘額，視為 0", row["需人工檢查"])
+
+    def test_a_pre_tax_total_not_read_is_the_total_less_tax_before_the_balance_is_added(self):
+        bill = high_voltage_bill(total_amount_twd=4010, pretax_total_twd=None, business_tax_twd=190,
+                                 previous_prepaid_balance_twd=-5780)
+        self.assertEqual(bill_to_row(bill)["稅前應繳總金額"], 9600)
 
     def test_a_balance_that_grew_or_an_applied_prepayment_adds_nothing(self):
         grew = high_voltage_bill(previous_prepaid_balance_twd=-1000, current_prepaid_balance_twd=6000)
