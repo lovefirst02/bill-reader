@@ -277,23 +277,53 @@ class WatchTests(unittest.TestCase):
         self.watcher.run_once()
         self.assertEqual(len(self.sheet()), 2)
 
-    def test_writes_wait_for_write_every(self):
+    def timed_watcher(self):
         self.watcher.close()
         clock = [time.time() + 3600]
-        self.watcher = Watcher(self.sites, self.root / "state", reader=object(), clock=lambda: clock[0], write_every=1800)
+        self.watcher = Watcher(self.sites, self.root / "state", reader=object(), clock=lambda: clock[0],
+                               write_every=1800, quiet=120, retry=300)
+        return clock
+
+    def test_bills_read_after_a_write_go_in_once_reading_goes_quiet(self):
+        clock = self.timed_watcher()
         self.bill(0, "a.pdf")
-        for site in self.sites:
-            self.watcher.take(bill_watch.list_site(site))
-        self.watcher.write_masters()
+        self.watcher.take(bill_watch.list_site(self.sites[0]))
+        self.watcher.write_masters()  # the first write does not wait
         self.assertEqual(len(self.sheet()), 1)
         self.bill(0, "b.pdf", meter="00-00-0000-00-9")
         clock[0] += 60
         self.watcher.take(bill_watch.list_site(self.sites[0]))
         self.watcher.write_masters()
         self.assertEqual(len(self.sheet()), 1)
-        clock[0] += 1800
+        clock[0] += 120
         self.watcher.write_masters()
         self.assertEqual(len(self.sheet()), 2)
+
+    def test_bills_that_keep_coming_are_written_every_write_every(self):
+        clock = self.timed_watcher()
+        self.bill(0, "a.pdf")
+        self.watcher.take(bill_watch.list_site(self.sites[0]))
+        self.watcher.write_masters()
+        for minute in range(1, 31):
+            self.bill(0, f"m{minute}.pdf", meter=f"00-00-0000-{minute:02d}-1")
+            clock[0] += 60
+            self.watcher.take(bill_watch.list_site(self.sites[0]))
+            self.watcher.write_masters()
+            self.assertEqual(len(self.sheet()), 1 if minute < 30 else 31)
+
+    def test_a_master_open_in_excel_is_tried_again_after_retry(self):
+        clock = self.timed_watcher()
+        self.bill(0, "a.pdf")
+        self.watcher.take(bill_watch.list_site(self.sites[0]))
+        with mock.patch("bill_reader.master.is_locked", return_value=True):
+            self.watcher.write_masters()
+        self.assertFalse(self.master.exists())
+        clock[0] += 200
+        self.watcher.write_masters()
+        self.assertFalse(self.master.exists())
+        clock[0] += 100
+        self.watcher.write_masters()
+        self.assertEqual(len(self.sheet()), 1)
 
     def test_a_file_that_fails_is_tried_a_few_times(self):
         self.bill(0, "a.pdf").write_text("bad")

@@ -6,8 +6,10 @@
 sites.csv has one row per site: Site, Folder, Master, Enabled. Subfolders are
 watched too. Each site has its own scanner thread; the bills are read one at a
 time by one reader, so the models are loaded once. What was read is kept in a
-local database, and each master gets the new rows at most every --write-every
-seconds: rows already in a master are never changed (master.py).
+local database. A master gets the new rows once no new bill has come for it
+for --quiet seconds, or, while bills keep coming, every --write-every seconds;
+one that cannot be written, as when it is open, is tried again after --retry
+seconds. Rows already in a master are never changed (master.py).
 """
 
 from __future__ import annotations
@@ -134,6 +136,8 @@ class Watcher:
         reader: Any = None,
         settle: float = 30,
         write_every: float = 1800,
+        quiet: float = 120,
+        retry: float = 300,
         attempts: int = 3,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -142,6 +146,8 @@ class Watcher:
         self.reader = reader
         self.settle = settle
         self.write_every = write_every
+        self.quiet = quiet
+        self.retry = retry
         self.attempts = attempts
         self.clock = clock
         state.mkdir(parents=True, exist_ok=True)
@@ -149,6 +155,8 @@ class Watcher:
         self.db.executescript(_SCHEMA)
         self.dirty: set[str] = set()
         self.written: dict[str, float] = {}
+        self.changed: dict[str, float] = {}  # when a master last got something new to write
+        self.retry_at: dict[str, float] = {}  # when a master that could not be written is tried again
         self.unseen: set[str] = set()
         for site in sites:  # bills read last time but not yet in a master, as when it could not be written
             key = self._master_key(site)
@@ -178,7 +186,7 @@ class Watcher:
             self.db.execute("UPDATE files SET status = 'deleted' WHERE site = ? AND path = ?", (site.name, path))
         if gone:
             self.db.commit()
-            self.dirty.add(self._master_key(site))
+            self._changed(site)
         for path, size, mtime in listing.files:
             if self.clock() - mtime >= self.settle:
                 self._take_file(site, path, size, mtime)
@@ -262,18 +270,36 @@ class Watcher:
             (site.name, relative, size, mtime, digest, status, bills, review, read_at, attempts, error),
         )
         self.db.commit()
-        self.dirty.add(self._master_key(site))
+        self._changed(site)
+
+    def _changed(self, site: Site) -> None:
+        key = self._master_key(site)
+        self.dirty.add(key)
+        self.changed[key] = self.clock()
 
     # ------------------------------------------------------------------ writing
     def write_masters(self, *, now: bool = False) -> None:
-        """Each master with something new, if --write-every has passed since it was last written."""
+        """Each master with something new, once reading for it has gone quiet.
+
+        While bills keep coming, a master is still written every --write-every
+        seconds; one that could not be written waits --retry seconds.
+        """
         for key in sorted(self.dirty):
-            if not now and self.clock() - self.written.get(key, float("-inf")) < self.write_every:
-                continue
+            clock = self.clock()
+            if not now:
+                if clock < self.retry_at.get(key, float("-inf")):
+                    continue
+                quiet = clock - self.changed.get(key, float("-inf")) >= self.quiet
+                overdue = clock - self.written.get(key, float("-inf")) >= self.write_every
+                if not (quiet or overdue):
+                    continue
             sites = [site for site in self.sites.values() if self._master_key(site) == key]
             if sites and self._write(sites[0].master, key, [site.name for site in sites]):
                 self.dirty.discard(key)
-            self.written[key] = self.clock()
+                self.written[key] = clock
+                self.retry_at.pop(key, None)
+            else:
+                self.retry_at[key] = clock + self.retry
 
     def _write(self, master: Path, key: str, names: list[str]) -> bool:
         marks = ",".join("?" * len(names))
@@ -408,7 +434,10 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true", help="read what is new, write the masters and stop (for Task Scheduler)")
     parser.add_argument("--scan-every", type=float, default=60, help="seconds between looks at each folder (default 60)")
     parser.add_argument("--settle", type=float, default=30, help="seconds a file must be unchanged before it is read (default 30)")
-    parser.add_argument("--write-every", type=float, default=1800, help="seconds at least between writes of a master (default 1800)")
+    parser.add_argument("--quiet", type=float, default=120, help="seconds with no new bill before a master is written (default 120)")
+    parser.add_argument("--write-every", type=float, default=1800,
+                        help="while bills keep coming, seconds between writes of a master (default 1800)")
+    parser.add_argument("--retry", type=float, default=300, help="seconds before a master that could not be written is tried again (default 300)")
     parser.add_argument("--attempts", type=int, default=3, help="tries for a file that fails to read (default 3)")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -417,7 +446,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     state.mkdir(parents=True, exist_ok=True)
     _logging_to(state)
     with SingleInstance(state):
-        watcher = Watcher(sites, state, settle=args.settle, write_every=args.write_every, attempts=args.attempts)
+        watcher = Watcher(sites, state, settle=args.settle, write_every=args.write_every,
+                          quiet=args.quiet, retry=args.retry, attempts=args.attempts)
         log.info("Watching %d site(s); state in %s", len(sites), state)
         try:
             if args.once:
