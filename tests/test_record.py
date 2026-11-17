@@ -62,6 +62,11 @@ class ExcelRowTests(unittest.TestCase):
         self.assertEqual(row["來源檔案"], "bill.pdf")
         self.assertEqual(row["頁碼"], 1)
 
+    def test_a_basic_charge_read_negative_is_taken_as_positive(self):
+        row = bill_to_row(high_voltage_bill(basic_charge_twd=-700000))
+        self.assertEqual(row["基本電費"], 700000)
+        self.assertEqual(row["其他調整費用"], 5000)
+
     def test_other_adjustment_is_total_due_minus_itemised_charges(self):
         row = bill_to_row(high_voltage_bill())
         # 800000 - 700000 - 120000 - (-25000): the official sample's only other

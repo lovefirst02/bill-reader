@@ -223,6 +223,8 @@ _VALUE_PATHS = {
 def _bill_values(bill: BillResult) -> dict[str, Any]:
     """Every column read from the bill."""
     values = {column: bill.get(path) for column, path in _VALUE_PATHS.items()}
+    if _is_number(values["基本電費"]):  # never negative: a minus sign read is a dash or a mark beside it
+        values["基本電費"] = abs(values["基本電費"])
     values["Billing Period 計費期間"] = _format_period(_first(bill, "user_info.billing_period", "payment_info.billing_period"))
     customer_number = _first(bill, "user_info.customer_number", "payment_info.customer_number")
     values["Custom No. 電號"] = _dashed_meter(str(customer_number)) if customer_number else None
