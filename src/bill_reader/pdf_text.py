@@ -88,6 +88,7 @@ def read_page(path: Path, page_number: int | None, dpi: int, notes: dict[str, An
             words = page.extract_words(x_tolerance=_WORD_GAP)
             walls = [(edge["x0"], edge["top"], edge["bottom"]) for edge in page.edges if edge["orientation"] == "v"]
             notes.update(words=len(words), rules=len(walls), page=f"{page.width:.0f}x{page.height:.0f}")
+            size = (float(page.width), float(page.height))
         if len(words) < _MIN_WORDS:
             return None
         # A rule can run through text too, as an underline does: then the rules are no guide.
@@ -114,5 +115,6 @@ def read_page(path: Path, page_number: int | None, dpi: int, notes: dict[str, An
     if issues:
         notes["missing"] = [issue.text for issue in issues]
     bill.ocr_lines = lines
-    bill["quality"].update({"source": "pdf_text", "page_number": page_number, "dpi": dpi})
+    bill["quality"].update({"source": "pdf_text", "page_number": page_number, "dpi": dpi,
+                            "image_size": (size[0] * dpi / 72, size[1] * dpi / 72)})  # the page in the lines' pixels
     return bill

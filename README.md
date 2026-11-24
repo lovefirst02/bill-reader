@@ -85,7 +85,34 @@ exe 的 zip 裡附了一份範例 `plugin_example.py`。開始監看前，先用
 TaipowerBillReaderCLI.exe plugin-test landlord.py 房東帳單.pdf
 ```
 
-資料庫、`watch.log` 和備份放在 `%LOCALAPPDATA%\BillReader\watch-…`（`--state` 可改），不放在同步資料夾裡。
+### 在帳單上自動標記（證據）
+
+`sites.csv` 加一欄 `Evidence`，讀完帳單後，用螢光筆標出寫進主表的值，旁邊加上紅字標籤，查證時可以從主表追回帳單上的位置：
+
+| `Evidence` 填 | 效果 |
+|---|---|
+| 留空或 `N` | 不標記 |
+| `Y` | PDF 直接標在來源檔上；照片另存成 PDF，放在主表旁的 `Evidence\<Site>\` |
+| 資料夾路徑 | 來源檔不動，每個檔案另存一份標好的 PDF 到這個資料夾 |
+
+```csv
+Site,Folder,Master,Enabled,Plugin,Evidence
+North,C:\Users\me\Company\North - Electricity,C:\Users\me\Company\Energy\master.xlsx,Y,,Y
+South,C:\Users\me\Company\South - Electricity,C:\Users\me\Company\Energy\master.xlsx,Y,,C:\Users\me\Company\Energy\Evidence\South
+```
+
+- 只有三個標籤：`Billing Period 2025-01-01 ~ 2025-01-31`（計費期間，用西元日期）、`Electricity Cost`（稅前應繳總金額；帳單沒印稅前時標應繳總金額）、`Electricity Usage`（計費度數的每一列，整組一個標籤）。轉供度數不標。
+- 用預繳餘額扣款的帳單，稅前應繳總金額和上期預繳餘額都用螢光筆標出，共用 `Electricity Cost` 這個標籤。
+- 標籤只有紅字，沒有底色，不會遮住帳單。標記是 PDF 註解，不是畫在頁面上：用 Acrobat Reader 可以移動、調整大小、刪除或改字。Edge、Chrome 看得到，但通常改不了。標籤用英文，避免閱讀器缺中文字型。
+- 直接標在來源檔時，標記附加在檔案尾端，原本的內容一個位元組都不動；改之前另存一份原檔在 `%LOCALAPPDATA%\BillReader\watch-…\originals\`，SharePoint 的版本記錄也留著原本的版本。標過的檔案不會被當成新檔案重讀，已經有程式標記的檔案不再標第二次。
+- 加密的 PDF（電子帳單常見，打開不用密碼但有加密）不能直接標在原檔，會另存一份標好的 PDF 到 `Evidence\<Site>\`，原檔不動，`Files` 會註明。
+- 來源檔在 Acrobat 裡開著、或讀完後又被改過時，先不標，下一輪再試。
+- 另存的證據檔被人改過（例如移動了標記），來源檔更新時不覆蓋。
+- 找不到位置的值不標，寫在 `Files` 工作表的「證據」欄；那一欄也寫每個檔案標好了沒有。
+- 證據資料夾不能在監看的資料夾裡面，否則證據檔會被當成新帳單。執行監看的帳號要有來源資料夾的寫入權限。
+- plugin 讀的帳單（例如房東帳單）不標記。
+
+資料庫、`watch.log`、主表的備份和標記前的原檔放在 `%LOCALAPPDATA%\BillReader\watch-…`（`--state` 可改），不放在同步資料夾裡。
 
 用 exe 時，兩個 exe 都接受 `watch`。視窗版 `TaipowerBillReader.exe` 不開主控台，適合在背景執行，訊息只寫進 `watch.log`。
 要登入就開始，用 Task Scheduler 設成「登入時」執行，不要做成 Windows 服務：OneDrive 只在使用者登入後同步。

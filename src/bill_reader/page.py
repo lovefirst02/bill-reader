@@ -35,6 +35,7 @@ def _read_straight(path: Path, engine: Any) -> BillResult:
     lines = _lines_of(engine.predict(np.ascontiguousarray(np.asarray(image)[:, :, ::-1])))
     result = parse_bill_layout(lines)
     result.ocr_lines = lines
+    result.setdefault("quality", {})["image_size"] = image.size
     return result
 
 
@@ -51,7 +52,10 @@ def read_image(image_path: str | Path, engine: Any) -> BillResult:
     with TemporaryDirectory(prefix="bill_reader_straight_") as folder:
         straight = Path(folder) / "page.png"
         page.rotate(angle, resample=Image.Resampling.BICUBIC, fillcolor=(255, 255, 255)).save(straight)
-        return _read_straight(straight, engine)
+        bill = _read_straight(straight, engine)
+    # Its lines are on the turned picture: marks on the page turn back (evidence.py).
+    bill["quality"]["turned_degrees"] = angle
+    return bill
 
 
 def read_pdf_page(pdf_path: str | Path, page_number: int, dpi: int, engine: Any) -> BillResult:

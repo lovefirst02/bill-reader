@@ -4,8 +4,10 @@
     bill-reader watch sites.csv --once
 
 sites.csv has one row per site: Site, Folder, Master, Enabled, and optionally
-Plugin, a .py file that reads the site's own kind of bill (plugin.py). Subfolders
-are watched too. Each site has its own scanner thread; the bills are read one at a
+Plugin, a .py file that reads the site's own kind of bill (plugin.py), and
+Evidence, which marks what was read on the bill (evidence.py): Y marks a PDF
+where it is and puts a photo's marked copy beside the master, a folder puts a
+marked copy of every bill there. Subfolders are watched too. Each site has its own scanner thread; the bills are read one at a
 time by one reader, so the models are loaded once. What was read is kept in a
 local database. A master gets the new rows once no new bill has come for it
 for --quiet seconds, or, while bills keep coming, every --write-every seconds;
@@ -22,6 +24,7 @@ import json
 import logging
 import os
 import queue
+import shutil
 import sqlite3
 import sys
 import threading
@@ -30,9 +33,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, NamedTuple
 
-from .master import ID, MASTER_COLUMNS, PAGE, READ_AT, SITE, SOURCE, MasterLocked, MasterRefused, write_master
+from .evidence import from_json, has_marks, is_encrypted, mark_pdf, mark_photo, page_marks, to_json
+from .master import ID, MASTER_COLUMNS, PAGE, READ_AT, SITE, SOURCE, MasterLocked, MasterRefused, is_locked, write_master
 from .plugin import PLUGIN_SUFFIXES, PluginError, extra_columns, load as load_plugin, read_rows
-from .reader import SUPPORTED_SUFFIXES, PageDone, FileFinished, PageReader, has_bill_values, iter_pages
+from .reader import PDF_SUFFIXES, SUPPORTED_SUFFIXES, PageDone, FileFinished, PageReader, has_bill_values, iter_pages
 from .record import COLUMNS, with_zeros
 
 log = logging.getLogger("bill_reader.watch")
@@ -48,6 +52,8 @@ class Site:
     folder: Path
     master: Path
     plugin: Path | None = None
+    evidence: Path | None = None  # where marked copies go; None when the site's bills are not marked
+    in_place: bool = False  # a PDF is marked where it is; only a photo's copy goes to ``evidence``
 
 
 def _read_text(path: Path) -> str:
@@ -84,13 +90,30 @@ def load_sites(path: Path) -> list[Site]:
             problems.append(f"line {line}: Plugin should be a .py file")
         elif plugin and not (path.parent / plugin).is_file():
             problems.append(f"line {line}: Plugin {plugin} not found")
+        elif (evidence := _evidence_of(row.get("evidence", ""), name, Path(folder), Path(master), path.parent)) is None:
+            problems.append(f"line {line}: Evidence should be Y, N or a folder outside the site's Folder")
         else:
-            sites.append(Site(name, Path(folder), Path(master), (path.parent / plugin).resolve() if plugin else None))
+            copies, in_place = evidence
+            sites.append(Site(name, Path(folder), Path(master), (path.parent / plugin).resolve() if plugin else None,
+                              copies, in_place))
     if problems:
         raise SystemExit(f"{path}:\n  " + "\n  ".join(problems))
     if not sites:
         raise SystemExit(f"{path}: no site is enabled (columns: Site, Folder, Master, Enabled)")
     return sites
+
+
+def _evidence_of(text: str, name: str, folder: Path, master: Path, base: Path) -> tuple[Path | None, bool] | None:
+    """Where a site's marked copies go and whether PDFs are marked in place; None when ``text`` is no setting.
+
+    A folder inside the watched one would have its copies read as new bills.
+    """
+    if text.lower() in _OFF or not text:
+        return (None, False)
+    if text.lower() in _ON:
+        return (master.parent / "Evidence" / name, True)
+    copies = (base / text).resolve()
+    return None if copies.is_relative_to(folder.resolve()) else (copies, False)
 
 
 class Listing(NamedTuple):
@@ -132,7 +155,10 @@ CREATE TABLE IF NOT EXISTS files (
     PRIMARY KEY (site, path));
 CREATE TABLE IF NOT EXISTS bills (id TEXT PRIMARY KEY, site TEXT, sha256 TEXT, row TEXT, replaces TEXT);
 CREATE TABLE IF NOT EXISTS placed (id TEXT, master TEXT, kind TEXT, target TEXT, PRIMARY KEY (id, master));
+CREATE TABLE IF NOT EXISTS evidence (
+    site TEXT, path TEXT, marks TEXT, state TEXT, note TEXT, output TEXT, sha256 TEXT, PRIMARY KEY (site, path));
 """
+_EVIDENCE = {"pending": "等待標記（檔案開著或剛更新）", "skipped": "未標記", "failed": "標記失敗"}
 
 
 class Watcher:
@@ -198,6 +224,10 @@ class Watcher:
         for path, size, mtime in listing.files:
             if self.clock() - mtime >= self.settle:
                 self._take_file(site, path, size, mtime)
+        if site.evidence is not None:  # marks that waited, as for a file open in Acrobat
+            for (path,) in self.db.execute("SELECT path FROM evidence WHERE site = ? AND state = 'pending'", (site.name,)).fetchall():
+                if path in here:
+                    self._apply_evidence(site, path)
 
     def _take_file(self, site: Site, relative: str, size: int, mtime: float) -> None:
         entry = self.db.execute(
@@ -240,6 +270,8 @@ class Watcher:
                     rows.append({column: row.get(column) for column in MASTER_COLUMNS}
                                 | {key: got[key] for key in extra_columns(got)})
                 self._keep(site, relative, size, mtime, digest, tries, before, rows, read_at, started)
+                if rows:
+                    self._evidence(site, relative, None, [])
                 return
             if path.suffix.lower() not in SUPPORTED_SUFFIXES:  # a spreadsheet the plugin left: no Taipower bill
                 self._keep(site, relative, size, mtime, digest, tries, before, [], read_at, started)
@@ -247,11 +279,15 @@ class Watcher:
         if self.reader is None:
             log.info("Loading the models...")
             self.reader = PageReader()
-        rows, errors = [], []
+        rows, errors, marks, unmarked = [], [], [], []
         for event in iter_pages([path], self.reader):
             if isinstance(event, PageDone):
                 if event.record is None or (event.bill is not None and not has_bill_values(event.bill)):
                     continue
+                if site.evidence is not None and event.bill is not None:
+                    on_page, missing = page_marks(event.bill, event.record.row, event.page_number or 1)
+                    marks += on_page
+                    unmarked += missing
                 row = with_zeros(event.record.row)
                 row.update({ID: f"{digest[:16]}-p{event.page_number or 1}", SITE: site.name, SOURCE: relative,
                             PAGE: event.page_number, READ_AT: read_at})
@@ -262,6 +298,100 @@ class Watcher:
             self._failed(site, relative, size, mtime, digest, tries, read_at, errors)
             return
         self._keep(site, relative, size, mtime, digest, tries, before, rows, read_at, started)
+        if rows:
+            self._evidence(site, relative, marks, unmarked)
+
+    # ----------------------------------------------------------------- evidence
+    def _evidence(self, site: Site, relative: str, marks: list | None, missing: list[str]) -> None:
+        """Keeps a file's marks and puts them on it; ``marks`` is None for bills a plugin read."""
+        if site.evidence is None:
+            return
+        note = f"找不到：{', '.join(dict.fromkeys(missing))}" if missing else None
+        if marks is None:
+            state, note = "skipped", "plugin 讀的帳單不標記"
+        elif not marks:
+            state, note = "skipped", note or "沒有可標記的值"
+        else:
+            state = "pending"
+        self.db.execute(
+            "INSERT INTO evidence (site, path, marks, state, note) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (site, path) DO UPDATE SET marks = excluded.marks, state = excluded.state, note = excluded.note",
+            (site.name, relative, json.dumps(to_json(marks or [])), state, note),
+        )
+        self.db.commit()
+        self._apply_evidence(site, relative)
+
+    def _apply_evidence(self, site: Site, relative: str) -> None:
+        """Puts a file's waiting marks on it, or on its copy; a file that is open or changing waits."""
+        found = self.db.execute("SELECT marks, state, note, output, sha256 FROM evidence WHERE site = ? AND path = ?",
+                                (site.name, relative)).fetchone()
+        if found is None or found[1] != "pending" or site.evidence is None:
+            return
+        marks, _, note, output, written = from_json(json.loads(found[0])), *found[1:]
+        source = site.folder / relative
+
+        def settle(state: str, text: str | None, output: str | None = output, written: str | None = written) -> None:
+            self.db.execute("UPDATE evidence SET state = ?, note = ?, output = ?, sha256 = ? WHERE site = ? AND path = ?",
+                            (state, text, output, written, site.name, relative))
+            self.db.commit()
+            self._changed(site)
+
+        try:
+            is_pdf = source.suffix.lower() in PDF_SUFFIXES
+            if site.in_place and is_pdf and not is_encrypted(source):
+                self._mark_in_place(site, relative, source, marks, note, settle)
+                return
+            if site.in_place and is_pdf:  # marking it in place would rewrite it without its encryption
+                note = "PDF 有加密，不能標在原檔，已另存" + (f"；{note}" if note else "")
+            target = site.evidence / f"{relative}.evidence.pdf"
+            if target.exists() and (written is None or _sha256(target) != written):
+                settle("done", "證據檔已被修改，未覆蓋" + (f"；{note}" if note else ""))
+                return
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temp = target.with_name(f"~${target.name}")
+            (mark_pdf if source.suffix.lower() in PDF_SUFFIXES else mark_photo)(source, temp, marks)
+            os.replace(temp, target)
+            settle("done", note, str(target), _sha256(target))
+            log.info("%s: %s marked in %s", site.name, relative, target)
+        except Exception as error:  # noqa: BLE001 - the bill is read all the same
+            log.warning("%s: %s not marked: %s", site.name, relative, error)
+            settle("failed", f"{type(error).__name__}: {error}")
+
+    def _mark_in_place(self, site: Site, relative: str, source: Path, marks: list, note: str | None,
+                       settle: Callable[..., None]) -> None:
+        """Marks a PDF where it is, keeping its original in the state folder.
+
+        It is taken for the same file afterwards, as a moved one is, so it is not read again.
+        """
+        entry = self.db.execute("SELECT size, mtime, sha256 FROM files WHERE site = ? AND path = ?", (site.name, relative)).fetchone()
+        before = source.stat()
+        if entry is None or (before.st_size, before.st_mtime) != (entry[0], entry[1]):
+            return  # changed since it was read: it is read again first
+        if is_locked(source):
+            log.info("%s: %s is open; marked later", site.name, relative)
+            return
+        if has_marks(source):
+            settle("done", "來源檔已有標記" + (f"；{note}" if note else ""), "", entry[2])
+            return
+        original = self.state / "originals" / site.name / relative
+        if not original.exists():
+            original.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, original)
+        temp = source.with_name(f"~${source.stem}.billreader.tmp")  # not ~$<name>, which is taken for a lock
+        try:
+            mark_pdf(source, temp, marks)
+            now = source.stat()
+            if (now.st_size, now.st_mtime) != (before.st_size, before.st_mtime):
+                return  # changed while it was marked: it is read again first
+            os.replace(temp, source)
+        finally:
+            temp.unlink(missing_ok=True)
+        after, digest = source.stat(), _sha256(source)
+        self.db.execute("UPDATE files SET size = ?, mtime = ?, sha256 = ? WHERE site = ? AND path = ?",
+                        (after.st_size, after.st_mtime, digest, site.name, relative))
+        self.db.execute("UPDATE bills SET sha256 = ? WHERE site = ? AND sha256 = ?", (digest, site.name, entry[2]))
+        settle("done", note, "", digest)
+        log.info("%s: %s marked in place; the original is in %s", site.name, relative, original)
 
     def _failed(self, site: Site, relative: str, size: int, mtime: float, digest: str, tries: int, read_at: str,
                 errors: list[str]) -> None:
@@ -360,10 +490,11 @@ class Watcher:
         versions = [(bills[row_id], target) for target, row_id in newest.items()]
         files = [
             [site, path, "沒有帳單頁" if status == "done" and count == 0 else _STATUS.get(status, status),
-             count, review, read_at, attempts, error]
-            for site, path, status, count, review, read_at, attempts, error in self.db.execute(
-                f"SELECT site, path, status, bills, review, read_at, attempts, error FROM files "
-                f"WHERE site IN ({marks}) ORDER BY site, path", names)
+             count, review, read_at, attempts, error, _evidence_text(*evidence)]
+            for site, path, status, count, review, read_at, attempts, error, *evidence in self.db.execute(
+                f"SELECT f.site, f.path, f.status, f.bills, f.review, f.read_at, f.attempts, f.error, e.state, e.note, e.output "
+                f"FROM files f LEFT JOIN evidence e ON e.site = f.site AND e.path = f.path "
+                f"WHERE f.site IN ({marks}) ORDER BY f.site, f.path", names)
         ]
         try:
             result = write_master(master, waiting, bills, duplicates, versions, files, self.state / "backups")
@@ -393,6 +524,17 @@ class Watcher:
 
     def close(self) -> None:
         self.db.close()
+
+
+def _evidence_text(state: str | None, note: str | None, output: str | None) -> str | None:
+    """A file's marks, as the Files sheet says it."""
+    if state is None:
+        return None
+    if state == "done":
+        text = f"已另存：{output}" if output else "已標記在來源檔"
+    else:
+        text = _EVIDENCE.get(state, state)
+    return f"{text}；{note}" if note else text
 
 
 def _scan(site: Site, listings: queue.Queue, every: float, stop: threading.Event) -> None:
