@@ -50,6 +50,41 @@ uv run bill-reader watch sites.csv --once    # 讀完新的、寫完主表就結
 - 主表不要放圖表、樞紐分析表或圖片：寫入時會遺失。需要的話另開一份 Excel 引用主表。
 - 同一份主表只能由一台電腦寫，否則 OneDrive 會產生衝突檔。在 SharePoint 網頁上編輯時程式察覺不到，剛好同時寫入仍可能產生衝突檔。
 
+### 特殊的 Site：用自己寫的 plugin 讀
+
+不是台電帳單的 Site（例如房東轉來的電費單），可以自己寫一個 `.py` 檔來讀，在 `sites.csv` 加一欄 `Plugin` 指向它（相對路徑以 `sites.csv` 所在的資料夾為準）：
+
+```csv
+Site,Folder,Master,Enabled,Plugin
+Leased,C:\Users\me\Company\Leased - Electricity,C:\Users\me\Company\Energy\master.xlsx,Y,landlord.py
+```
+
+檔案裡要有 `read(path, site)`，回傳值決定怎麼處理這個檔案：
+
+| 回傳 | 意思 |
+|---|---|
+| `None` | 不是這個 plugin 的檔案，照台電帳單讀 |
+| `[]` | 是這個 plugin 的檔案，但沒有帳單 |
+| `[{...}, ...]` | 一個 dict 一張帳單，key 用主表的欄名 |
+| 丟出例外 | 這個檔案讀失敗，錯誤和 plugin 的行號寫進 `Files` 和 log，之後重試 |
+
+- 每一列一定要有 `Billing Period 計費期間`（例如 `114/10/01~114/10/31`）和 `Custom No. 電號`：主表靠這兩個欄位判斷是不是同一張帳單。沒有台電電號的帳單，自己定一個每個月都一樣的名稱，例如 `房東-A棟3F`。
+- 金額和度數放數字，不要放 `"1,234"` 這種文字。沒有的欄位不放，寫進主表時是 0。只有總度數時，自己挑一欄放，例如 `計費度數_尖峰度數`。
+- 一個檔案有好幾張帳單時，每次讀出來的順序要一樣，或自己給 `頁碼`。`ID`、`Site`、`來源檔案`、`讀取時間` 由程式填。
+- 台電帳單的推算（預繳餘額、稅前、其他調整費用）不套用在 plugin 的列：給什麼就寫什麼。
+- 主表沒有的欄名（例如 `電費單價`），要自己在主表加上這一欄才會寫入。
+- 有 plugin 的 Site 也會看 `.xlsx`、`.xlsm`、`.xls`、`.csv`；plugin 不讀的就記為「沒有帳單頁」。
+- exe 用它裡面的 Python 執行 plugin，所以跑監看的電腦不用裝 Python；plugin 只能 import 標準函式庫和 exe 裡有的套件：pdfplumber、pandas、numpy、openpyxl、Pillow、opencv。exe 裡的 pandas 是 3.x，和自己電腦上的版本可能不同，寫好後用 `plugin-test` 在 exe 上跑一次。
+- 同一個檔案每次要讀出一樣的結果；不要修改或搬移帳單檔、不要自己寫主表、不要用 `input()` 或連網。要記 log 用 `logging.getLogger("bill_reader.plugin")`，會寫進 `watch.log`。
+- 改了 plugin，已經讀過的檔案不會重讀。
+- plugin 不要放在 SharePoint 同步的帳單資料夾裡：能改那個資料夾的人，就能在這台電腦上執行程式。
+
+exe 的 zip 裡附了一份範例 `plugin_example.py`。開始監看前，先用 `plugin-test` 看看讀出什麼（不會寫任何東西）：
+
+```powershell
+TaipowerBillReaderCLI.exe plugin-test landlord.py 房東帳單.pdf
+```
+
 資料庫、`watch.log` 和備份放在 `%LOCALAPPDATA%\BillReader\watch-…`（`--state` 可改），不放在同步資料夾裡。
 
 用 exe 時，兩個 exe 都接受 `watch`。視窗版 `TaipowerBillReader.exe` 不開主控台，適合在背景執行，訊息只寫進 `watch.log`。

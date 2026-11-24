@@ -20,7 +20,8 @@ dependencies = [
 bill-reader = "bill_reader.cli:main"
 
 [dependency-groups]
-dev = ["pyinstaller>=6.10"]
+# pandas is not used by the reader: it is in the exe for site plugins (plugin.py).
+dev = ["pyinstaller>=6.10", "pandas>=2.2"]
 
 [tool.setuptools.dynamic]
 version = { attr = "bill_reader.__version__" }

@@ -174,12 +174,52 @@ def _cell(value: object) -> object:
     return "" if value is None else value
 
 
+def plugin_test(argv: list[str]) -> int:
+    """What a site's plugin reads from some files, as the watcher would add it, without writing anything."""
+    from .plugin import PluginError, extra_columns, load, read_rows
+
+    parser = argparse.ArgumentParser(prog="bill-reader plugin-test", description="Show what a plugin reads from bill files; nothing is written")
+    parser.add_argument("plugin", type=Path, help="the plugin's .py file")
+    parser.add_argument("files", nargs="+", type=Path, help="bill files to read")
+    parser.add_argument("--site", default="test", help="the site name passed to read() (default: test)")
+    args = parser.parse_args(argv)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+    try:
+        load(args.plugin)
+    except PluginError as error:
+        print(error)
+        return 1
+    failed = False
+    for path in args.files:
+        print(f"== {path}")
+        try:
+            rows = read_rows(args.plugin, path.resolve(), args.site)
+        except PluginError as error:
+            print(f"  失敗：{error}")
+            failed = True
+            continue
+        if rows is None:
+            print("  plugin 回傳 None：這個檔案會交給台電帳單的讀法")
+        elif not rows:
+            print("  沒有帳單")
+        for row in rows or ():
+            print(f"  第 {row['頁碼']} 列")
+            extras = extra_columns(row)
+            for key, value in row.items():
+                note = "　（主表要自己加這欄才會寫入）" if key in extras else ""
+                print(f"    {key}：{value!r}{note}")
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["watch"]:
         from .watch import main as watch
 
         return watch(argv[1:])
+    if argv[:1] == ["plugin-test"]:
+        return plugin_test(argv[1:])
     parser = argparse.ArgumentParser(description="Read Taipower bills (PDF, images) to a CSV; without arguments, opens a window")
     parser.add_argument("inputs", nargs="*", help="bill files or folders")
     parser.add_argument("-o", "--output", type=Path, help="the CSV to write; by default bills.csv in the folder")

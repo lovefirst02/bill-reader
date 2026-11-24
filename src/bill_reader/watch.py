@@ -3,8 +3,9 @@
     bill-reader watch sites.csv
     bill-reader watch sites.csv --once
 
-sites.csv has one row per site: Site, Folder, Master, Enabled. Subfolders are
-watched too. Each site has its own scanner thread; the bills are read one at a
+sites.csv has one row per site: Site, Folder, Master, Enabled, and optionally
+Plugin, a .py file that reads the site's own kind of bill (plugin.py). Subfolders
+are watched too. Each site has its own scanner thread; the bills are read one at a
 time by one reader, so the models are loaded once. What was read is kept in a
 local database. A master gets the new rows once no new bill has come for it
 for --quiet seconds, or, while bills keep coming, every --write-every seconds;
@@ -30,8 +31,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, NamedTuple
 
 from .master import ID, MASTER_COLUMNS, PAGE, READ_AT, SITE, SOURCE, MasterLocked, MasterRefused, write_master
+from .plugin import PLUGIN_SUFFIXES, PluginError, extra_columns, load as load_plugin, read_rows
 from .reader import SUPPORTED_SUFFIXES, PageDone, FileFinished, PageReader, has_bill_values, iter_pages
-from .record import with_zeros
+from .record import COLUMNS, with_zeros
 
 log = logging.getLogger("bill_reader.watch")
 
@@ -45,6 +47,7 @@ class Site:
     name: str
     folder: Path
     master: Path
+    plugin: Path | None = None
 
 
 def _read_text(path: Path) -> str:
@@ -77,8 +80,12 @@ def load_sites(path: Path) -> list[Site]:
             problems.append(f"line {line}: Master should be an .xlsx file")
         elif any(site.name == name for site in sites):
             problems.append(f"line {line}: site {name} is listed twice")
+        elif (plugin := row.get("plugin", "")) and not plugin.lower().endswith(".py"):
+            problems.append(f"line {line}: Plugin should be a .py file")
+        elif plugin and not (path.parent / plugin).is_file():
+            problems.append(f"line {line}: Plugin {plugin} not found")
         else:
-            sites.append(Site(name, Path(folder), Path(master)))
+            sites.append(Site(name, Path(folder), Path(master), (path.parent / plugin).resolve() if plugin else None))
     if problems:
         raise SystemExit(f"{path}:\n  " + "\n  ".join(problems))
     if not sites:
@@ -97,8 +104,9 @@ def list_site(site: Site) -> Listing:
     if not site.folder.is_dir():
         return Listing(site.name, None)
     files = []
+    suffixes = (*SUPPORTED_SUFFIXES, *PLUGIN_SUFFIXES) if site.plugin else SUPPORTED_SUFFIXES
     for path in site.folder.rglob("*"):
-        if path.suffix.lower() not in SUPPORTED_SUFFIXES or path.name.startswith(("~$", ".")):
+        if path.suffix.lower() not in suffixes or path.name.startswith(("~$", ".")):
             continue
         try:
             stat = path.stat()
@@ -216,12 +224,30 @@ class Watcher:
     def _read(self, site: Site, path: Path, relative: str, size: int, mtime: float, digest: str, tries: int,
               before: str | None = None) -> None:
         """``before`` is the hash of what was at this path until its content changed."""
+        started = time.time()
+        read_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        if site.plugin is not None:
+            try:
+                found = read_rows(site.plugin, path, site.name)
+            except PluginError as error:
+                self._failed(site, relative, size, mtime, digest, tries, read_at, [str(error)])
+                return
+            if found is not None:
+                rows = []
+                for got in found:
+                    row = with_zeros(dict.fromkeys(COLUMNS) | got)
+                    row.update({ID: f"{digest[:16]}-p{got[PAGE]}", SITE: site.name, SOURCE: relative, READ_AT: read_at})
+                    rows.append({column: row.get(column) for column in MASTER_COLUMNS}
+                                | {key: got[key] for key in extra_columns(got)})
+                self._keep(site, relative, size, mtime, digest, tries, before, rows, read_at, started)
+                return
+            if path.suffix.lower() not in SUPPORTED_SUFFIXES:  # a spreadsheet the plugin left: no Taipower bill
+                self._keep(site, relative, size, mtime, digest, tries, before, [], read_at, started)
+                return
         if self.reader is None:
             log.info("Loading the models...")
             self.reader = PageReader()
-        started = time.time()
         rows, errors = [], []
-        read_at = time.strftime("%Y-%m-%d %H:%M:%S")
         for event in iter_pages([path], self.reader):
             if isinstance(event, PageDone):
                 if event.record is None or (event.bill is not None and not has_bill_values(event.bill)):
@@ -233,9 +259,18 @@ class Watcher:
             elif isinstance(event, FileFinished) and event.error:
                 errors.append(event.error)
         if errors:
-            log.warning("%s: %s failed (try %d of %d): %s", site.name, relative, tries, self.attempts, "; ".join(errors))
-            self._save_file(site, relative, size, mtime, digest, "failed", None, None, read_at, attempts=tries, error="; ".join(errors))
+            self._failed(site, relative, size, mtime, digest, tries, read_at, errors)
             return
+        self._keep(site, relative, size, mtime, digest, tries, before, rows, read_at, started)
+
+    def _failed(self, site: Site, relative: str, size: int, mtime: float, digest: str, tries: int, read_at: str,
+                errors: list[str]) -> None:
+        log.warning("%s: %s failed (try %d of %d): %s", site.name, relative, tries, self.attempts, "; ".join(errors))
+        self._save_file(site, relative, size, mtime, digest, "failed", None, None, read_at, attempts=tries, error="; ".join(errors))
+
+    def _keep(self, site: Site, relative: str, size: int, mtime: float, digest: str, tries: int, before: str | None,
+              rows: list[dict[str, Any]], read_at: str, started: float) -> None:
+        """The rows read from a file, kept until they are written to the master."""
         review = sum(1 for row in rows if row.get("需人工檢查"))
         earlier = self._versions_of(site, relative, before) if before else {}
         for row in rows:
@@ -421,10 +456,11 @@ def _logging_to(folder: Path) -> None:
     if sys.stderr is not None:  # a file's name the console's code page lacks must not stop the log
         sys.stderr.reconfigure(errors="replace")
         handlers.append(logging.StreamHandler())
+    parent = logging.getLogger("bill_reader")  # bill_reader.watch, and bill_reader.plugin for plugins
     for handler in handlers:
         handler.setFormatter(formatter)
-        log.addHandler(handler)
-    log.setLevel(logging.INFO)
+        parent.addHandler(handler)
+    parent.setLevel(logging.INFO)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
@@ -445,6 +481,16 @@ def main(argv: Iterable[str] | None = None) -> int:
     state = args.state or default_state(args.sites)
     state.mkdir(parents=True, exist_ok=True)
     _logging_to(state)
+    for site in sites:
+        if site.plugin is None:
+            continue
+        try:
+            load_plugin(site.plugin)
+        except PluginError as error:
+            raise SystemExit(f"{site.name}: {error}") from None
+        if site.plugin.is_relative_to(site.folder.resolve()):
+            log.warning("%s: the plugin %s is in the bill folder: whoever can change that folder can run code here",
+                        site.name, site.plugin)
     with SingleInstance(state):
         watcher = Watcher(sites, state, settle=args.settle, write_every=args.write_every,
                           quiet=args.quiet, retry=args.retry, attempts=args.attempts)

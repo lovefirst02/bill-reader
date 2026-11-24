@@ -20,6 +20,7 @@ foreach ($name in (Get-Content models.lock.json -Raw | ConvertFrom-Json).files.P
     Copy-Item (Join-Path $root "models\$name") $target -Force
 }
 Copy-Item (Join-Path $PSScriptRoot "sites.csv") $app -Force  # an example for watch: every row off until edited
+Copy-Item (Join-Path $PSScriptRoot "plugin_example.py") $app -Force  # an example of a site's own reader
 
 $version = (Select-String -Path src\bill_reader\__init__.py -Pattern '__version__ = "(.+)"').Matches[0].Groups[1].Value
 $zip = Join-Path $root "dist\TaipowerBillReader-$version.zip"

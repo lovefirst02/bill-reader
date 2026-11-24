@@ -227,6 +227,9 @@ def write_master(
                 cell = sheet.cell(last, names[column], row.get(column))
                 if column in _FIGURES:
                     cell.number_format = "#,##0.##"
+            for column, value in row.items():  # a plugin's own column, where someone added it to the master
+                if column not in MASTER_COLUMNS and column in names:
+                    sheet.cell(last, names[column], value)
             present[row[ID]] = row
             if key:
                 keys[key] = row[ID]

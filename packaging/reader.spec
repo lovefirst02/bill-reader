@@ -12,6 +12,8 @@ a = Analysis(
     pathex=[str(ROOT / "src")],
     binaries=collect_dynamic_libs("onnxruntime"),
     datas=collect_data_files("pdfminer"),
+    # What a site's plugin may import besides what the reader uses (plugin.py).
+    hiddenimports=["pdfplumber", "openpyxl", "pandas", "decimal", "fractions", "statistics", "calendar", "difflib", "textwrap"],
     excludes=["torch", "tensorflow", "matplotlib", "IPython", "jupyter", "pytest"],
     noarchive=False,
 )
