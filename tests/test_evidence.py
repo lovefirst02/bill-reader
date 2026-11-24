@@ -52,6 +52,14 @@ def blank_pdf(path, pages=1):
     return path
 
 
+def encrypted_pdf(path):
+    """A PDF that opens with no password but is encrypted, as an e-bill often is."""
+    writer = PdfWriter(clone_from=blank_pdf(path.with_name("plain.pdf")))
+    writer.encrypt(user_password="", owner_password="made-up-owner", algorithm="AES-128")
+    writer.write(path)
+    return path
+
+
 class LocateTests(unittest.TestCase):
     def test_a_value_is_found_beside_its_label_and_a_wrapped_period_across_two_lines(self):
         lines = [line("稅前應繳總金額", 100, 400), line("3,000.0", 600, 400), line("計費期間", 100, 100),
@@ -66,6 +74,38 @@ class LocateTests(unittest.TestCase):
                                ((800, "energy_consumption"), (50, "transferred_energy")))
         self.assertEqual((billed[1], transferred[1]), (726, 826))
         self.assertIsNone(locate(lines, ("尖峰度數",), 800, "transferred_energy"))
+
+
+class TableBillTests(unittest.TestCase):
+    """The e-bill site's table layout, from the line positions of test_detailed_high_voltage_bill."""
+
+    def marks(self, keep=lambda line: True):
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).parent))
+        from test_detailed_high_voltage_bill import DetailedHighVoltageBillTests
+
+        from bill_reader.parser import parse_bill_layout
+        from bill_reader.record import bill_to_record
+
+        fixture = DetailedHighVoltageBillTests()
+        fixture.setUp()
+        lines = [line for line in fixture.lines if keep(line)]
+        bill = parse_bill_layout(lines)
+        bill.ocr_lines = lines
+        bill["quality"].update(image_size=(1000, 1400), dpi=200)
+        return page_marks(bill, bill_to_record(bill).row, 1)
+
+    def test_the_period_printed_in_gregorian_digits_and_a_cost_read_with_a_dot_for_a_comma_are_found(self):
+        marks, missing = self.marks()
+        self.assertEqual(missing, [])
+        self.assertEqual([mark.label for mark in marks if mark.label_box],
+                         ["Billing Period 2026-06-01 ~ 2026-06-30", "Electricity Cost", "Electricity Usage"])
+
+    def test_billed_rows_beside_their_centred_caption_are_marked_and_transferred_ones_are_not(self):
+        marks, _ = self.marks()
+        rows = sorted(round(mark.box[1] * 1400) for mark in marks if mark.label.startswith("Electricity Usage ") and mark.box)
+        self.assertEqual(rows, [672, 691])  # 尖峰 128210 and 離峰 140054, not the transferred 尖峰 31190 below them
 
 
 class MarkTests(unittest.TestCase):
@@ -138,6 +178,11 @@ class WriteTests(unittest.TestCase):
         self.assertTrue(has_marks(self.root / "marked.pdf"))
         self.assertFalse(has_marks(source))
 
+    def test_an_encrypted_pdf_gets_a_whole_marked_copy(self):
+        source = encrypted_pdf(self.root / "bill.pdf")
+        self.assertEqual(mark_pdf(source, self.root / "marked.pdf", [Mark(1, "Electricity Cost", (0.5, 0.3, 0.2, 0.02))]), 1)
+        self.assertTrue(has_marks(self.root / "marked.pdf"))
+
     def test_a_turned_page_is_left_unmarked(self):
         writer = PdfWriter(blank_pdf(self.root / "bill.pdf"))
         writer.pages[0].rotate(90)
@@ -204,6 +249,15 @@ class WatchEvidenceTests(unittest.TestCase):
         watcher.run_once()
         self.assertEqual(self.reads.read, ["bill.pdf"])
         self.assertFalse(list(self.folder.glob("~$*")))
+
+    def test_an_encrypted_pdf_is_left_as_it_is_and_marked_in_a_copy(self):
+        source = encrypted_pdf(self.folder / "bill.pdf")
+        original = source.read_bytes()
+        self.watch(self.master.parent / "Evidence" / "North", True).run_once()
+        self.assertEqual(source.read_bytes(), original)
+        copy = self.master.parent / "Evidence" / "North" / "bill.pdf.evidence.pdf"
+        self.assertTrue(has_marks(copy))
+        self.assertIn("PDF 有加密，不能標在原檔，已另存", self.files()["bill.pdf"]["證據"])
 
     def test_a_pdf_open_elsewhere_is_marked_once_it_is_closed(self):
         source = blank_pdf(self.folder / "bill.pdf")

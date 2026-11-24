@@ -65,14 +65,26 @@ def _font_size(page_width: float) -> float:
     return max(FONT_SIZE, FONT_SIZE * page_width / 595)
 
 
-def _period_label(period: Any) -> str:
-    """The period in Gregorian dates, for readers who do not count years from 1912: 114/01/01~114/01/31 is 2025."""
+def _dates(period: Any) -> list[tuple[int, int, int]]:
+    """The period's two dates as Gregorian (year, month, day); [] when it is not two dates."""
     dates = re.findall(r"(\d{2,4})\D+(\d{1,2})\D+(\d{1,2})", str(period))
     if len(dates) != 2:
+        return []
+    return [(int(year) + 1911 if int(year) < 1911 else int(year), int(month), int(day)) for year, month, day in dates]
+
+
+def _gregorian_digits(period: Any) -> str | None:
+    dates = _dates(period)
+    return "".join(f"{year}{month:02d}{day:02d}" for year, month, day in dates) or None
+
+
+def _period_label(period: Any) -> str:
+    """The period in Gregorian dates, for readers who do not count years from 1912: 114/01/01~114/01/31 is 2025."""
+    dates = _dates(period)
+    if not dates:
         return "Billing Period"
-    gregorian = [f"{int(year) + 1911 if int(year) < 1911 else int(year)}-{int(month):02d}-{int(day):02d}"
-                 for year, month, day in dates]
-    return f"Billing Period {gregorian[0]} ~ {gregorian[1]}"
+    first, last = (f"{year}-{month:02d}-{day:02d}" for year, month, day in dates)
+    return f"Billing Period {first} ~ {last}"
 
 
 # A label; its highlight, if any; the highlights it names as a group, if any.
@@ -94,7 +106,14 @@ def _labelled(bill: BillResult, row: Mapping[str, Any]) -> tuple[list[_Labelled]
 
     # Three labels only: Billing Period, Electricity Cost and Electricity Usage.
     if row.get(PERIOD):
-        mark(_period_label(row[PERIOD]), ("計費期間",), row[PERIOD])
+        # A table bill prints the period in Gregorian digits only: Billing period:20250101-20250131.
+        label = _period_label(row[PERIOD])
+        box = next((found for value in (row[PERIOD], _gregorian_digits(row[PERIOD]))
+                    if value and (found := locate(lines, ("計費期間", "billingperiod"), value))), None)
+        if box is None:
+            missing.append(label)
+        else:
+            marks.append((label, box, None))
 
     pretax, total = row.get(PRETAX), row.get(TOTAL)
     printed_pretax = bill.get("charge_info.pretax_total_twd")
@@ -384,14 +403,29 @@ def _place(page: Any, marks: list[Mark], writer: Any, number: int) -> int:
     return added
 
 
+def is_encrypted(path: Path) -> bool:
+    """An encrypted PDF (as an e-bill often is, with no password to open it) takes no incremental update."""
+    from pypdf import PdfReader
+
+    return PdfReader(path).is_encrypted
+
+
 def mark_pdf(source: Path, target: Path, marks: list[Mark]) -> int:
-    """``source`` with the marks added, written to ``target`` as an incremental update; the annotations added.
+    """``source`` with the marks added, written to ``target``; the annotations added.
 
-    A page turned by /Rotate is left unmarked: where its text was read is not where it is drawn.
+    The marks are an incremental update, the original bytes kept, unless the PDF
+    is encrypted: then ``target`` is a whole new copy without the encryption, so
+    it must not stand in for the original. A page turned by /Rotate is left
+    unmarked: where its text was read is not where it is drawn.
     """
-    from pypdf import PdfWriter
+    from pypdf import PdfReader, PdfWriter
 
-    writer = PdfWriter(source, incremental=True)
+    if is_encrypted(source):
+        reader = PdfReader(source)
+        reader.decrypt("")  # opens without a password; one that needs a password fails here
+        writer = PdfWriter(clone_from=reader)
+    else:
+        writer = PdfWriter(source, incremental=True)
     added = 0
     for number, page in enumerate(writer.pages, start=1):
         on_page = [mark for mark in marks if mark.page == number]

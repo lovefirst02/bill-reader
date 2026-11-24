@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, NamedTuple
 
-from .evidence import from_json, has_marks, mark_pdf, mark_photo, page_marks, to_json
+from .evidence import from_json, has_marks, is_encrypted, mark_pdf, mark_photo, page_marks, to_json
 from .master import ID, MASTER_COLUMNS, PAGE, READ_AT, SITE, SOURCE, MasterLocked, MasterRefused, is_locked, write_master
 from .plugin import PLUGIN_SUFFIXES, PluginError, extra_columns, load as load_plugin, read_rows
 from .reader import PDF_SUFFIXES, SUPPORTED_SUFFIXES, PageDone, FileFinished, PageReader, has_bill_values, iter_pages
@@ -337,9 +337,12 @@ class Watcher:
             self._changed(site)
 
         try:
-            if site.in_place and source.suffix.lower() in PDF_SUFFIXES:
+            is_pdf = source.suffix.lower() in PDF_SUFFIXES
+            if site.in_place and is_pdf and not is_encrypted(source):
                 self._mark_in_place(site, relative, source, marks, note, settle)
                 return
+            if site.in_place and is_pdf:  # marking it in place would rewrite it without its encryption
+                note = "PDF 有加密，不能標在原檔，已另存" + (f"；{note}" if note else "")
             target = site.evidence / f"{relative}.evidence.pdf"
             if target.exists() and (written is None or _sha256(target) != written):
                 settle("done", "證據檔已被修改，未覆蓋" + (f"；{note}" if note else ""))

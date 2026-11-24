@@ -105,6 +105,7 @@ South,C:\Users\me\Company\South - Electricity,C:\Users\me\Company\Energy\master.
 - 用預繳餘額扣款的帳單，稅前應繳總金額和上期預繳餘額都用螢光筆標出，共用 `Electricity Cost` 這個標籤。
 - 標籤只有紅字，沒有底色，不會遮住帳單。標記是 PDF 註解，不是畫在頁面上：用 Acrobat Reader 可以移動、調整大小、刪除或改字。Edge、Chrome 看得到，但通常改不了。標籤用英文，避免閱讀器缺中文字型。
 - 直接標在來源檔時，標記附加在檔案尾端，原本的內容一個位元組都不動；改之前另存一份原檔在 `%LOCALAPPDATA%\BillReader\watch-…\originals\`，SharePoint 的版本記錄也留著原本的版本。標過的檔案不會被當成新檔案重讀，已經有程式標記的檔案不再標第二次。
+- 加密的 PDF（電子帳單常見，打開不用密碼但有加密）不能直接標在原檔，會另存一份標好的 PDF 到 `Evidence\<Site>\`，原檔不動，`Files` 會註明。
 - 來源檔在 Acrobat 裡開著、或讀完後又被改過時，先不標，下一輪再試。
 - 另存的證據檔被人改過（例如移動了標記），來源檔更新時不覆蓋。
 - 找不到位置的值不標，寫在 `Files` 工作表的「證據」欄；那一欄也寫每個檔案標好了沒有。

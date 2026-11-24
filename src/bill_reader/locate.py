@@ -10,16 +10,12 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
-from .lines import OcrLine
+from .lines import OcrLine, _compact
 
 Box = tuple[float, float, float, float]  # x, y, width, height in the page's pixels
 
-_NUMBER = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+_NUMBER = re.compile(r"-?\d[\d,.]*\d|-?\d")  # dots and commas together: OCR mixes them up (1.591,649.0)
 _GROUP_HEADINGS = {"energy_consumption": ("計費度數",), "transferred_energy": ("轉供度數",)}
-
-
-def _compact(text: str) -> str:
-    return re.sub(r"[\s：:（）()]", "", text).replace("缴", "繳")
 
 
 def _center_y(line: OcrLine) -> float:
@@ -39,24 +35,58 @@ def union(lines: Iterable[OcrLine], pad: float = 4) -> Box:
     return (left, top, right - left, bottom - top)
 
 
+def _readings(token: str) -> list[float]:
+    """A printed figure as a number, and as one with a dot read for a thousands comma (1.591,649.0)."""
+    readings = []
+    for text in (token.replace(",", ""), re.sub(r"[.,](?=\d{3}(?:[.,]|$))", "", token),
+                 re.sub(r"[.,](?=\d{3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?$)", "", token).replace(",", ".")):
+        try:
+            readings.append(float(text))
+        except ValueError:
+            continue
+    return readings
+
+
 def matches_value(line: OcrLine, value: Any) -> bool:
     """Whether the line shows ``value``: a number as printed, or a text's digits (a period, a meter)."""
     if value is None:
         return False
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        for token in _NUMBER.findall(line.text):
-            try:
-                if abs(abs(float(token.replace(",", ""))) - abs(value)) < 0.01:
-                    return True
-            except ValueError:
-                continue
-        return False
+        return any(abs(abs(reading) - abs(value)) < 0.01 for token in _NUMBER.findall(line.text) for reading in _readings(token))
     digits = re.sub(r"\D", "", str(value))
     return len(digits) >= 4 and digits in re.sub(r"\D", "", line.text)
 
 
+def _table_scope(lines: list[OcrLine], group_key: str) -> list[OcrLine] | None:
+    """On a table bill, a group's caption sits beside its rows, centred: the groups part halfway between captions.
+
+    The same split as table_layout.parse_energy_table; None when the page is no table bill.
+    """
+    from .table_layout import is_table_layout
+
+    if not is_table_layout(lines):
+        return None
+    captions = {
+        key: next((line for line in lines if any(_compact(line.text).startswith(alias) for alias in aliases)), None)
+        for key, aliases in _GROUP_HEADINGS.items()
+    }
+    billed, transferred = captions["energy_consumption"], captions["transferred_energy"]
+    if billed is None:
+        return None
+    split = float("inf")
+    if transferred is not None:
+        split = (_center_y(billed) + _center_y(transferred)) / 2 - min(billed.height, transferred.height) / 4
+    top = min((line.y for line in lines if _compact(line.text).startswith("用電資料")), default=0.0)
+    if group_key == "energy_consumption":
+        return [line for line in lines if top <= _center_y(line) < split]
+    return [line for line in lines if _center_y(line) >= split]
+
+
 def group_scope(lines: list[OcrLine], group_key: str) -> list[OcrLine]:
     """The lines under a kWh group's heading, up to the next group's."""
+    table = _table_scope(lines, group_key)
+    if table is not None:
+        return table
     headings = {
         key: min((line.y for line in lines if any(_compact(line.text).startswith(alias) for alias in aliases)), default=None)
         for key, aliases in _GROUP_HEADINGS.items()
