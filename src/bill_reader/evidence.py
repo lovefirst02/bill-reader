@@ -74,10 +74,10 @@ def _period_label(period: Any) -> str:
     """The period in Gregorian dates, for readers who do not count years from 1912: 114/01/01~114/01/31 is 2025."""
     dates = re.findall(r"(\d{2,4})\D+(\d{1,2})\D+(\d{1,2})", str(period))
     if len(dates) != 2:
-        return "Billing period"
+        return "Billing Period"
     gregorian = [f"{int(year) + 1911 if int(year) < 1911 else int(year)}-{int(month):02d}-{int(day):02d}"
                  for year, month, day in dates]
-    return f"Billing period {gregorian[0]} ~ {gregorian[1]}"
+    return f"Billing Period {gregorian[0]} ~ {gregorian[1]}"
 
 
 # A label; its highlight, if any; the highlights it names as a group, if any.
@@ -97,6 +97,7 @@ def _labelled(bill: BillResult, row: Mapping[str, Any]) -> tuple[list[_Labelled]
         else:
             marks.append((label, box, None))
 
+    # Three labels only: Billing Period, Electricity Cost and Electricity Usage.
     if row.get(PERIOD):
         mark(_period_label(row[PERIOD]), ("計費期間",), row[PERIOD])
 
@@ -108,33 +109,34 @@ def _labelled(bill: BillResult, row: Mapping[str, Any]) -> tuple[list[_Labelled]
     tax = bill.get("charge_info.business_tax_twd")
     used = total - printed_total if _is_number(total) and _is_number(printed_total) and total != printed_total else 0
     if _is_number(pretax):
-        cost = f"Grey Electricity Cost {_figure(pretax)}"
+        cost = f"Electricity Cost {_figure(pretax)}"
+        # The figure the cost starts from, as printed, and how the cost was worked out from it.
         if _is_number(printed_pretax):
-            mark(cost + (f" = {_figure(printed_pretax)} + {_figure(used)} prepaid used" if used else ""),
-                 ("稅前應繳總金額",), printed_pretax)
+            start, aliases, worked = printed_pretax, ("稅前應繳總金額",), _figure(printed_pretax)
         elif _is_number(printed_total):
+            start, aliases = printed_total, ("應繳總金額", "繳費總金額")
             if printed_total == 0:
                 worked = "0"
             elif _is_number(tax):
-                worked = f"{_figure(printed_total)} - tax {_figure(tax)}"
+                worked = f"{_figure(printed_total)} - {_figure(tax)}"
             else:
                 worked = f"{_figure(printed_total)} / 1.05"
-            if used:
-                worked = f"({worked}) + {_figure(used)} prepaid used"
-            mark(f"{cost} = {worked}", ("應繳總金額", "繳費總金額"), printed_total)
         else:
+            start = None
+        if start is None or (start_box := locate(lines, aliases, start)) is None:
             missing.append(cost)
-    if used:
-        before = bill.get("charge_info.previous_prepaid_balance_twd")
-        after = bill.get("charge_info.current_prepaid_balance_twd")
-        if _is_number(before):
-            left = abs(after) if _is_number(after) else 0
-            mark(f"Prepaid used {_figure(used)} = balance {_figure(abs(before))} - {_figure(left)} left",
-                 ("上期預繳餘額",), before)
-        if _is_number(after):
-            mark(f"Prepaid balance left {_figure(abs(after))}", ("本期預繳餘額",), after)
+        elif not used and worked == _figure(pretax):
+            marks.append((cost, start_box, None))
         else:
-            marks.append(("No later prepaid balance printed: counted as 0", None, None))
+            # Paid partly from a prepaid balance: the balance it used is highlighted too, under the one label.
+            before = bill.get("charge_info.previous_prepaid_balance_twd")
+            balance_box = locate(lines, ("上期預繳餘額",), before) if used and _is_number(before) else None
+            label = f"{cost} = {worked} + {_figure(used)}" if used else f"{cost} = {worked}"
+            if balance_box is None:
+                marks.append((label, start_box, None))
+            else:
+                marks.append((label, None, [start_box, balance_box]))
+                marks += [(cost, start_box, None), (f"Prepaid balance used {_figure(used)}", balance_box, None)]
 
     # Each billed kWh row is highlighted and the group gets one label: a label per row would hide the next row.
     # Transferred kWh are not marked.
@@ -150,9 +152,9 @@ def _labelled(bill: BillResult, row: Mapping[str, Any]) -> tuple[list[_Labelled]
                 aliases, name = _KWH[component]
                 box = locate(lines, aliases, value, group_key)
                 if box is None:
-                    missing.append(f"{kind} kWh {name}")
+                    missing.append(f"{kind} {name}")
                 else:
-                    rows.append((f"{kind} kWh {name} {_figure(value)}", box))
+                    rows.append((f"{kind} {name} {_figure(value)} kWh", box))
                 total_kwh += value
         if rows:
             marks.append((f"{kind} {_figure(total_kwh)} kWh", None, [box for _, box in rows]))
