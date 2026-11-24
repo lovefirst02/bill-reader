@@ -73,16 +73,15 @@ class MarkTests(unittest.TestCase):
         marks, missing = page_marks(made_up_bill(), made_up_row(), 1)
         shown = [mark.label for mark in marks if mark.label_box]
         self.assertEqual(missing, [])
-        self.assertEqual(shown, ["Billing Period 2025-01-01 ~ 2025-01-31", "Electricity Cost 3,500 = 3,000 + 500",
-                                 "Electricity Usage 1,000 kWh"])
+        self.assertEqual(shown, ["Billing Period 2025-01-01 ~ 2025-01-31", "Electricity Cost", "Electricity Usage"])
         self.assertFalse([mark for mark in marks if "Transferred" in mark.label])  # transferred kWh are not marked
 
     def test_a_cost_paid_partly_from_a_balance_highlights_the_balance_under_the_same_label(self):
         marks, _ = page_marks(made_up_bill(), made_up_row(), 1)
         highlighted = [mark.label for mark in marks if mark.box and not mark.label_box]
-        self.assertIn("Prepaid balance used 500", highlighted)  # its own words only in the highlight's comment
-        self.assertIn("Electricity Cost 3,500", highlighted)
-        self.assertIn("Electricity Usage peak 800 kWh", highlighted)
+        self.assertIn("Prepaid balance used", highlighted)  # its own words only in the highlight's comment
+        self.assertIn("Electricity Cost", highlighted)
+        self.assertIn("Electricity Usage peak", highlighted)
 
     def test_a_period_is_labelled_in_gregorian_dates_whatever_way_it_was_written(self):
         from bill_reader.evidence import _period_label
@@ -92,10 +91,11 @@ class MarkTests(unittest.TestCase):
         self.assertEqual(_period_label("2025/02/01~2025/02/28"), "Billing Period 2025-02-01 ~ 2025-02-28")
         self.assertEqual(_period_label("114/01/01"), "Billing Period")
 
-    def test_a_pre_tax_total_not_printed_is_marked_on_the_total_with_its_sum(self):
+    def test_a_pre_tax_total_not_printed_is_marked_on_the_total(self):
         bill = made_up_bill(pretax_total_twd=None, previous_prepaid_balance_twd=None)
         marks, _ = page_marks(bill, made_up_row(稅前應繳總金額=3000, 應繳總金額=3150), 1)
-        self.assertIn("Electricity Cost 3,000 = 3,150 - 150", [mark.label for mark in marks])
+        cost = next(mark for mark in marks if mark.label == "Electricity Cost")
+        self.assertAlmostEqual(cost.box[1], 496 / 1400, places=3)  # the total's row
 
     def test_labels_keep_off_the_printed_text_where_there_is_room(self):
         bill = made_up_bill()

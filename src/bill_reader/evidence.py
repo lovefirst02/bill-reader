@@ -5,8 +5,9 @@ resize or delete them in a PDF reader (Acrobat Reader). A PDF bill is marked
 with an incremental update: the marks are appended and the original bytes stay
 as they were. A photo becomes a PDF of itself with the marks.
 
-A value the bill does not print, as when a prepaid balance paid part of it,
-is marked on the figures it was worked out from, its label giving the sum.
+Three labels only, in words: Billing Period (with its dates in Gregorian
+years), Electricity Cost and Electricity Usage. A cost paid partly from a
+prepaid balance has the balance highlighted too, under the one label.
 Labels keep off the printed text where they can, and are plain ASCII: a
 reader that redraws a comment may lack a Chinese font.
 """
@@ -64,12 +65,6 @@ def _font_size(page_width: float) -> float:
     return max(FONT_SIZE, FONT_SIZE * page_width / 595)
 
 
-def _figure(value: Any) -> str:
-    if isinstance(value, float) and not value.is_integer():
-        return f"{value:,.2f}".rstrip("0").rstrip(".")
-    return f"{int(value):,}"
-
-
 def _period_label(period: Any) -> str:
     """The period in Gregorian dates, for readers who do not count years from 1912: 114/01/01~114/01/31 is 2025."""
     dates = re.findall(r"(\d{2,4})\D+(\d{1,2})\D+(\d{1,2})", str(period))
@@ -106,37 +101,27 @@ def _labelled(bill: BillResult, row: Mapping[str, Any]) -> tuple[list[_Labelled]
     printed_total = bill.get("charge_info.total_amount_twd")
     if printed_total is None:
         printed_total = bill.get("payment_info.total_amount_twd")
-    tax = bill.get("charge_info.business_tax_twd")
     used = total - printed_total if _is_number(total) and _is_number(printed_total) and total != printed_total else 0
     if _is_number(pretax):
-        cost = f"Electricity Cost {_figure(pretax)}"
-        # The figure the cost starts from, as printed, and how the cost was worked out from it.
+        cost = "Electricity Cost"
+        # The pre-tax total as printed; a bill printing none (a home's) has its total marked instead.
         if _is_number(printed_pretax):
-            start, aliases, worked = printed_pretax, ("稅前應繳總金額",), _figure(printed_pretax)
+            start, aliases = printed_pretax, ("稅前應繳總金額",)
         elif _is_number(printed_total):
             start, aliases = printed_total, ("應繳總金額", "繳費總金額")
-            if printed_total == 0:
-                worked = "0"
-            elif _is_number(tax):
-                worked = f"{_figure(printed_total)} - {_figure(tax)}"
-            else:
-                worked = f"{_figure(printed_total)} / 1.05"
         else:
             start = None
         if start is None or (start_box := locate(lines, aliases, start)) is None:
             missing.append(cost)
-        elif not used and worked == _figure(pretax):
-            marks.append((cost, start_box, None))
         else:
             # Paid partly from a prepaid balance: the balance it used is highlighted too, under the one label.
             before = bill.get("charge_info.previous_prepaid_balance_twd")
             balance_box = locate(lines, ("上期預繳餘額",), before) if used and _is_number(before) else None
-            label = f"{cost} = {worked} + {_figure(used)}" if used else f"{cost} = {worked}"
             if balance_box is None:
-                marks.append((label, start_box, None))
+                marks.append((cost, start_box, None))
             else:
-                marks.append((label, None, [start_box, balance_box]))
-                marks += [(cost, start_box, None), (f"Prepaid balance used {_figure(used)}", balance_box, None)]
+                marks.append((cost, None, [start_box, balance_box]))
+                marks += [(cost, start_box, None), ("Prepaid balance used", balance_box, None)]
 
     # Each billed kWh row is highlighted and the group gets one label: a label per row would hide the next row.
     # Transferred kWh are not marked.
@@ -145,7 +130,6 @@ def _labelled(bill: BillResult, row: Mapping[str, Any]) -> tuple[list[_Labelled]
             continue
         kind = "Electricity Usage"
         rows: list[tuple[str, Box]] = []
-        total_kwh = 0
         for component, _ in _TOU_COMPONENTS:
             value = row.get(f"{group}_{component}")
             if _is_number(value) and value:
@@ -154,10 +138,9 @@ def _labelled(bill: BillResult, row: Mapping[str, Any]) -> tuple[list[_Labelled]
                 if box is None:
                     missing.append(f"{kind} {name}")
                 else:
-                    rows.append((f"{kind} {name} {_figure(value)} kWh", box))
-                total_kwh += value
+                    rows.append((f"{kind} {name}", box))
         if rows:
-            marks.append((f"{kind} {_figure(total_kwh)} kWh", None, [box for _, box in rows]))
+            marks.append((kind, None, [box for _, box in rows]))
             marks += [(label, box, None) for label, box in rows]
     return marks, missing
 

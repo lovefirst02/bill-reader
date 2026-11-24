@@ -101,8 +101,8 @@ North,C:\Users\me\Company\North - Electricity,C:\Users\me\Company\Energy\master.
 South,C:\Users\me\Company\South - Electricity,C:\Users\me\Company\Energy\master.xlsx,Y,,C:\Users\me\Company\Energy\Evidence\South
 ```
 
-- 只有三個標籤：`Billing Period 2025-01-01 ~ 2025-01-31`（計費期間，用西元日期）、`Electricity Cost`（稅前應繳總金額；帳單沒印稅前時標應繳總金額）、`Electricity Usage … kWh`（計費度數的每一列，寫合計）。轉供度數不標。
-- 帳單沒印的值，標籤寫出算式。例如用預繳餘額扣款的帳單：`Electricity Cost 3,500 = 3,000 + 500`，稅前應繳總金額和上期預繳餘額都用螢光筆標出，不另外加標籤。
+- 只有三個標籤：`Billing Period 2025-01-01 ~ 2025-01-31`（計費期間，用西元日期）、`Electricity Cost`（稅前應繳總金額；帳單沒印稅前時標應繳總金額）、`Electricity Usage`（計費度數的每一列，整組一個標籤）。轉供度數不標。
+- 用預繳餘額扣款的帳單，稅前應繳總金額和上期預繳餘額都用螢光筆標出，共用 `Electricity Cost` 這個標籤。
 - 標籤只有紅字，沒有底色，不會遮住帳單。標記是 PDF 註解，不是畫在頁面上：用 Acrobat Reader 可以移動、調整大小、刪除或改字。Edge、Chrome 看得到，但通常改不了。標籤用英文，避免閱讀器缺中文字型。
 - 直接標在來源檔時，標記附加在檔案尾端，原本的內容一個位元組都不動；改之前另存一份原檔在 `%LOCALAPPDATA%\BillReader\watch-…\originals\`，SharePoint 的版本記錄也留著原本的版本。標過的檔案不會被當成新檔案重讀，已經有程式標記的檔案不再標第二次。
 - 來源檔在 Acrobat 裡開著、或讀完後又被改過時，先不標，下一輪再試。
