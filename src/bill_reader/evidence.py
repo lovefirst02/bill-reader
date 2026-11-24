@@ -77,7 +77,7 @@ def _period_label(period: Any) -> str:
         return "Billing period"
     gregorian = [f"{int(year) + 1911 if int(year) < 1911 else int(year)}-{int(month):02d}-{int(day):02d}"
                  for year, month, day in dates]
-    return f"Billing period {gregorian[0]} to {gregorian[1]}"
+    return f"Billing period {gregorian[0]} ~ {gregorian[1]}"
 
 
 # A label; its highlight, if any; the highlights it names as a group, if any.
@@ -136,9 +136,12 @@ def _labelled(bill: BillResult, row: Mapping[str, Any]) -> tuple[list[_Labelled]
         else:
             marks.append(("No later prepaid balance printed: counted as 0", None, None))
 
-    # Each kWh row is highlighted and the group gets one label: a label per row would hide the next row.
+    # Each billed kWh row is highlighted and the group gets one label: a label per row would hide the next row.
+    # Transferred kWh are not marked.
     for group, group_key in _ENERGY_GROUPS:
-        kind = "Electricity Usage" if group_key == "energy_consumption" else "Transferred"
+        if group_key != "energy_consumption":
+            continue
+        kind = "Electricity Usage"
         rows: list[tuple[str, Box]] = []
         total_kwh = 0
         for component, _ in _TOU_COMPONENTS:
@@ -211,6 +214,23 @@ def _place_label(near: Fraction, size: tuple[float, float], taken: list[Fraction
     return best[1]
 
 
+def _free_line(size: tuple[float, float], taken: list[Fraction]) -> Fraction:
+    """A place for a page's note: from the top down, at the left edge then the right, hiding the least."""
+    label_width, label_height = size
+    margin = 0.01
+    best: tuple[float, Fraction] | None = None
+    for step in range(int((1 - 2 * margin) / label_height)):
+        top = margin + step * label_height
+        for left in (margin, 1 - margin - label_width):
+            spot = (max(0.0, left), top, label_width, label_height)
+            hidden = sum(_overlap(spot, box) for box in taken)
+            if hidden == 0:
+                return spot
+            if best is None or hidden < best[0]:
+                best = (hidden, spot)
+    return best[1] if best else (margin, margin, label_width, label_height)
+
+
 def page_marks(bill: BillResult, row: Mapping[str, Any], page: int) -> tuple[list[Mark], list[str]]:
     """The marks for one bill page, and the labels whose value was not found as printed."""
     quality = bill.get("quality") or {}
@@ -240,7 +260,11 @@ def page_marks(bill: BillResult, row: Mapping[str, Any], page: int) -> tuple[lis
             taken.append(spot)
             marks.append(Mark(page, label, None, spot))
         elif box is None:
-            marks.append(Mark(page, label))
+            # A note explains the mark before it, so it goes beside that mark's label; else on a free line of the page.
+            before = next((mark.label_box for mark in reversed(marks) if mark.label_box), None)
+            spot = _place_label(before, label_size, taken) if before else _free_line(label_size, taken)
+            taken.append(spot)
+            marks.append(Mark(page, label, None, spot))
         elif id(box) in rows_of_groups:  # a row of a group: its label is only the highlight's comment
             marks.append(Mark(page, label, highlights[id(box)]))
         else:
@@ -321,18 +345,19 @@ def _highlight(writer: Any, rect: tuple[float, float, float, float], label: str)
 
 
 def _text(writer: Any, rect: tuple[float, float, float, float], label: str, font_size: float) -> Any:
-    from pypdf.generic import DictionaryObject, NameObject, TextStringObject
+    from pypdf.generic import DictionaryObject, NameObject, NumberObject, TextStringObject
 
     width, height = rect[2] - rect[0], rect[3] - rect[1]
     color = " ".join(f"{part:.3f}" for part in LABEL)
     font = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
                              NameObject("/BaseFont"): NameObject("/Helvetica"), NameObject("/Encoding"): NameObject("/WinAnsiEncoding")})
     resources = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/Helv"): font})})
-    content = (f"q 1 1 1 rg 0 0 {width:.2f} {height:.2f} re f Q "
-               f"BT /Helv {font_size:.1f} Tf {color} rg 2 {height * 0.28:.2f} Td {_literal(label)} Tj ET")
+    # The text alone: no fill or border behind it, so the bill shows through.
+    content = f"BT /Helv {font_size:.1f} Tf {color} rg 2 {height * 0.28:.2f} Td {_literal(label)} Tj ET"
     appearance = _stream(writer, content, width, height, resources)
     return _annotation("/FreeText", rect, _ascii(label), {
         NameObject("/DA"): TextStringObject(f"/Helv {font_size:.1f} Tf {color} rg"),
+        NameObject("/BS"): DictionaryObject({NameObject("/W"): NumberObject(0)}),  # nor a border when a reader redraws it
     }, appearance)
 
 
