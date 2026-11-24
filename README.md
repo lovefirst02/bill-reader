@@ -101,7 +101,7 @@ North,C:\Users\me\Company\North - Electricity,C:\Users\me\Company\Energy\master.
 South,C:\Users\me\Company\South - Electricity,C:\Users\me\Company\Energy\master.xlsx,Y,,C:\Users\me\Company\Energy\Evidence\South
 ```
 
-- 標記：計費期間、稅前應繳總金額（帳單沒印稅前時標應繳總金額）、計費度數和轉供度數的每一列。
+- 標記：計費期間（標籤用西元日期，例如 `Billing period 2025-01-01 to 2025-01-31`）、稅前應繳總金額（帳單沒印稅前時標應繳總金額）、計費度數和轉供度數的每一列。
 - 帳單沒印的值，標出算式用到的數字，標籤寫出算式。例如用預繳餘額扣款的帳單：`Grey Electricity Cost 3,500 = 3,000 + 500 prepaid used`，並標出上期預繳餘額；沒印本期預繳餘額時，頁面上方註明視為 0。
 - 標記是 PDF 註解，不是畫在頁面上：用 Acrobat Reader 可以移動、調整大小、刪除或改字。Edge、Chrome 看得到，但通常改不了。標籤用英文，避免閱讀器缺中文字型。
 - 直接標在來源檔時，標記附加在檔案尾端，原本的內容一個位元組都不動；改之前另存一份原檔在 `%LOCALAPPDATA%\BillReader\watch-…\originals\`，SharePoint 的版本記錄也留著原本的版本。標過的檔案不會被當成新檔案重讀，已經有程式標記的檔案不再標第二次。

@@ -14,6 +14,7 @@ reader that redraws a comment may lack a Chinese font.
 from __future__ import annotations
 
 import math
+import re
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -69,6 +70,16 @@ def _figure(value: Any) -> str:
     return f"{int(value):,}"
 
 
+def _period_label(period: Any) -> str:
+    """The period in Gregorian dates, for readers who do not count years from 1912: 114/01/01~114/01/31 is 2025."""
+    dates = re.findall(r"(\d{2,4})\D+(\d{1,2})\D+(\d{1,2})", str(period))
+    if len(dates) != 2:
+        return "Billing period"
+    gregorian = [f"{int(year) + 1911 if int(year) < 1911 else int(year)}-{int(month):02d}-{int(day):02d}"
+                 for year, month, day in dates]
+    return f"Billing period {gregorian[0]} to {gregorian[1]}"
+
+
 # A label; its highlight, if any; the highlights it names as a group, if any.
 _Labelled = tuple[str, Box | None, list[Box] | None]
 
@@ -87,7 +98,7 @@ def _labelled(bill: BillResult, row: Mapping[str, Any]) -> tuple[list[_Labelled]
             marks.append((label, box, None))
 
     if row.get(PERIOD):
-        mark("Billing period", ("計費期間",), row[PERIOD])
+        mark(_period_label(row[PERIOD]), ("計費期間",), row[PERIOD])
 
     pretax, total = row.get(PRETAX), row.get(TOTAL)
     printed_pretax = bill.get("charge_info.pretax_total_twd")

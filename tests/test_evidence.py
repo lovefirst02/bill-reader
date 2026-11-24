@@ -78,11 +78,20 @@ class MarkTests(unittest.TestCase):
         self.assertIn("No later prepaid balance printed: counted as 0", labels)
         self.assertIn("Electricity Usage 1,000 kWh", labels)
         self.assertIn("Transferred 50 kWh", labels)
+        self.assertIn("Billing period 2025-01-01 to 2025-01-31", labels)
         note = next(mark for mark in marks if mark.label.startswith("No later"))
         self.assertEqual((note.box, note.label_box), (None, None))
         row = next(mark for mark in marks if mark.label == "Electricity Usage kWh peak 800")
         self.assertIsNotNone(row.box)
         self.assertIsNone(row.label_box)  # one label for the group
+
+    def test_a_period_is_labelled_in_gregorian_dates_whatever_way_it_was_written(self):
+        from bill_reader.evidence import _period_label
+
+        self.assertEqual(_period_label("114/01/01~114/01/31"), "Billing period 2025-01-01 to 2025-01-31")
+        self.assertEqual(_period_label("113/12/16~114/1/15"), "Billing period 2024-12-16 to 2025-01-15")
+        self.assertEqual(_period_label("2025/02/01~2025/02/28"), "Billing period 2025-02-01 to 2025-02-28")
+        self.assertEqual(_period_label("114/01/01"), "Billing period")
 
     def test_a_pre_tax_total_not_printed_is_marked_on_the_total_with_its_sum(self):
         bill = made_up_bill(pretax_total_twd=None, previous_prepaid_balance_twd=None)
